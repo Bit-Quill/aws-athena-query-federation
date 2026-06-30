@@ -7,9 +7,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -19,28 +19,30 @@
  */
 package com.amazonaws.athena.connectors.influxdb;
 
-import static org.junit.Assert.assertEquals;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import com.amazonaws.athena.connector.lambda.handlers.FederationRequestHandler;
+import org.junit.Before;
+import org.junit.Test;
 
 import java.util.HashMap;
 import java.util.Map;
 
-import org.junit.Before;
-import org.junit.Test;
+import static org.junit.Assert.assertEquals;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
-import com.amazonaws.athena.connector.lambda.handlers.FederationRequestHandler;
-
-public class InfluxDbConnectionFactoryTest {
+public class InfluxDbConnectionFactoryTest
+{
     private FederationRequestHandler mockHandler;
 
     @Before
-    public void setUp() {
+    public void setUp()
+    {
         mockHandler = mock(FederationRequestHandler.class);
     }
 
     @Test
-    public void testResolveTokenPlainString() {
+    public void testResolveTokenPlainString()
+    {
         final Map<String, String> config = new HashMap<>();
         config.put("influxdb_host", "https://localhost:8086");
         config.put("influxdb_token", "my-plain-token");
@@ -52,7 +54,8 @@ public class InfluxDbConnectionFactoryTest {
     }
 
     @Test
-    public void testResolveTokenJsonWithDefaultKey() {
+    public void testResolveTokenJsonWithDefaultKey()
+    {
         final Map<String, String> config = new HashMap<>();
         config.put("influxdb_host", "https://localhost:8086");
         config.put("influxdb_token", "${my-secret}");
@@ -65,7 +68,8 @@ public class InfluxDbConnectionFactoryTest {
     }
 
     @Test
-    public void testResolveTokenJsonWithCustomKey() {
+    public void testResolveTokenJsonWithCustomKey()
+    {
         final Map<String, String> config = new HashMap<>();
         config.put("influxdb_host", "https://localhost:8086");
         config.put("influxdb_token", "${my-secret}");
@@ -79,7 +83,8 @@ public class InfluxDbConnectionFactoryTest {
     }
 
     @Test
-    public void testResolveTokenSecretsManagerPlainString() {
+    public void testResolveTokenSecretsManagerPlainString()
+    {
         final Map<String, String> config = new HashMap<>();
         config.put("influxdb_host", "https://localhost:8086");
         config.put("influxdb_token", "${my-secret}");
@@ -92,7 +97,8 @@ public class InfluxDbConnectionFactoryTest {
     }
 
     @Test(expected = IllegalArgumentException.class)
-    public void testResolveTokenMissingThrows() {
+    public void testResolveTokenMissingThrows()
+    {
         final Map<String, String> config = new HashMap<>();
         config.put("influxdb_host", "https://localhost:8086");
 

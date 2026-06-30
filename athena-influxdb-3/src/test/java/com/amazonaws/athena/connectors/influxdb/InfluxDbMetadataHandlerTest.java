@@ -7,9 +7,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -18,25 +18,6 @@
  * #L%
  */
 package com.amazonaws.athena.connectors.influxdb;
-
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.isNull;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
-
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.stream.Stream;
-
-import org.apache.arrow.vector.types.Types;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
 
 import com.amazonaws.athena.connector.lambda.data.BlockAllocator;
 import com.amazonaws.athena.connector.lambda.data.BlockAllocatorImpl;
@@ -50,8 +31,27 @@ import com.amazonaws.athena.connector.lambda.metadata.ListTablesResponse;
 import com.amazonaws.athena.connector.lambda.security.FederatedIdentity;
 import com.amazonaws.athena.connectors.influxdb.InfluxDbConnectionFactory.DatabaseInfo;
 import com.influxdb.v3.client.InfluxDBClient;
+import org.apache.arrow.vector.types.Types;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Test;
 
-public class InfluxDbMetadataHandlerTest {
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Stream;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+public class InfluxDbMetadataHandlerTest
+{
     private static final FederatedIdentity IDENTITY = new FederatedIdentity("arn", "account",
             Collections.<String, String>emptyMap(), Collections.<String>emptyList(),
             Collections.<String, String>emptyMap());
@@ -61,7 +61,8 @@ public class InfluxDbMetadataHandlerTest {
     private InfluxDbMetadataHandler handler;
 
     @Before
-    public void setUp() {
+    public void setUp()
+    {
         allocator = new BlockAllocatorImpl();
         mockFactory = mock(InfluxDbConnectionFactory.class);
         mockClient = mock(InfluxDBClient.class);
@@ -86,12 +87,14 @@ public class InfluxDbMetadataHandlerTest {
     }
 
     @After
-    public void tearDown() {
+    public void tearDown()
+    {
         allocator.close();
     }
 
     @Test
-    public void testDoListSchemaNamesDefault() throws Exception {
+    public void testDoListSchemaNamesDefault() throws Exception
+    {
         final ListSchemasResponse response = handler.doListSchemaNames(
                 allocator,
                 new ListSchemasRequest(IDENTITY, "queryId", "catalog"));
@@ -101,7 +104,8 @@ public class InfluxDbMetadataHandlerTest {
     }
 
     @Test
-    public void testDoListSchemaNamesMultiple() throws Exception {
+    public void testDoListSchemaNamesMultiple() throws Exception
+    {
         final Map<String, String> config = new HashMap<>();
         config.put("spill_bucket", "test-bucket");
         config.put("spill_prefix", "test-prefix");
@@ -129,8 +133,9 @@ public class InfluxDbMetadataHandlerTest {
     }
 
     @Test
-    public void testDoListTables() throws Exception {
-        final Object[][] rows = { new Object[] { "cpu" }, new Object[] { "mem" } };
+    public void testDoListTables() throws Exception
+    {
+        final Object[][] rows = {new Object[]{"cpu"}, new Object[]{"mem"}};
         when(mockClient.query(anyString())).thenReturn(Stream.of(rows));
 
         final ListTablesResponse response = handler.doListTables(
@@ -169,7 +174,8 @@ public class InfluxDbMetadataHandlerTest {
     }
 
     @Test
-    public void testToArrowType() {
+    public void testToArrowType()
+    {
         assertEquals(Types.MinorType.BIGINT, InfluxDbMetadataHandler.toArrowType("BIGINT"));
         assertEquals(Types.MinorType.FLOAT8, InfluxDbMetadataHandler.toArrowType("DOUBLE"));
         assertEquals(Types.MinorType.BIT, InfluxDbMetadataHandler.toArrowType("BOOLEAN"));

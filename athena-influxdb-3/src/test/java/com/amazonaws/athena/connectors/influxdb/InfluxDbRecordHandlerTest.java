@@ -19,43 +19,49 @@
  */
 package com.amazonaws.athena.connectors.influxdb;
 
-import static org.junit.Assert.assertEquals;
+import org.junit.Test;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 
-import org.junit.Test;
+import static org.junit.Assert.assertEquals;
 
-public class InfluxDbRecordHandlerTest {
+public class InfluxDbRecordHandlerTest
+{
     @Test
-    public void testToZonedDateTimeWithZonedDateTime() {
+    public void testToZonedDateTimeWithZonedDateTime()
+    {
         final ZonedDateTime zonedDateTime = ZonedDateTime.now();
         assertEquals(InfluxDbRecordHandler.toZonedDateTime(zonedDateTime), zonedDateTime);
     }
 
     @Test
-    public void testToZonedDateTimeWithInstant() {
+    public void testToZonedDateTimeWithInstant()
+    {
         final Instant instant = Instant.now();
         assertEquals(InfluxDbRecordHandler.toZonedDateTime(instant), instant.atZone(ZoneId.of("UTC")));
     }
 
     @Test
-    public void testToZonedDateTimeWithLocalDateTime() {
+    public void testToZonedDateTimeWithLocalDateTime()
+    {
         final LocalDateTime localDateTime = LocalDateTime.now();
         assertEquals(InfluxDbRecordHandler.toZonedDateTime(localDateTime), localDateTime.atZone(ZoneId.of("UTC")));
     }
 
     @Test
-    public void testToZonedDateTimeWithNanoseconds() {
+    public void testToZonedDateTimeWithNanoseconds()
+    {
         final Long nanoseconds = 1782258710000000000L;
         assertEquals(Instant.ofEpochMilli(nanoseconds / 1_000_000L).atZone(ZoneId.of("UTC")),
                 InfluxDbRecordHandler.toZonedDateTime(nanoseconds));
     }
 
     @Test
-    public void testToZonedDateTimeWithMilliSeconds() {
+    public void testToZonedDateTimeWithMilliSeconds()
+    {
         final Long milliseconds = 1782258710000L;
         assertEquals(Instant.ofEpochMilli(milliseconds).atZone(ZoneId.of("UTC")),
                 InfluxDbRecordHandler.toZonedDateTime(milliseconds));

@@ -7,9 +7,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -19,10 +19,15 @@
  */
 package com.amazonaws.athena.connectors.influxdb;
 
-import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.DEFAULT_TOKEN_KEY;
-import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.ENV_INFLUXDB_HOST;
-import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.ENV_INFLUXDB_TOKEN;
-import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.ENV_INFLUXDB_TOKEN_KEY;
+import com.amazonaws.athena.connector.lambda.domain.TableName;
+import com.amazonaws.athena.connector.lambda.handlers.FederationRequestHandler;
+import com.google.common.reflect.TypeToken;
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
+import com.google.gson.annotations.SerializedName;
+import com.influxdb.v3.client.InfluxDBClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.URI;
@@ -36,31 +41,21 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Stream;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import com.amazonaws.athena.connector.lambda.domain.TableName;
-import com.amazonaws.athena.connector.lambda.handlers.FederationRequestHandler;
-import com.google.common.reflect.TypeToken;
-import com.google.gson.Gson;
-import com.google.gson.JsonObject;
-import com.google.gson.annotations.SerializedName;
-import com.influxdb.v3.client.InfluxDBClient;
+import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.DEFAULT_TOKEN_KEY;
+import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.ENV_INFLUXDB_HOST;
+import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.ENV_INFLUXDB_TOKEN;
+import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.ENV_INFLUXDB_TOKEN_KEY;
 
 /**
- * Creates InfluxDB client connections, resolving the auth token from Secrets
- * Manager.
+ * Creates InfluxDB client connections, resolving the auth token from Secrets Manager.
  *
- * Token resolution supports two formats:
- * 1. Plain string secret — the entire secret value is the token.
- * 2. JSON secret — a JSON object; the token is extracted from a configurable
- * key
- * (env var influxdb_token_key, defaults to "token").
+ * Token resolution supports two formats: 1. Plain string secret — the entire secret value is the token. 2. JSON secret — a JSON object; the token is extracted
+ * from a configurable key (env var influxdb_token_key, defaults to "token").
  *
- * The env var influxdb_token can be either a literal token or a Secrets Manager
- * reference using the SDK's ${secret_name} pattern.
+ * The env var influxdb_token can be either a literal token or a Secrets Manager reference using the SDK's ${secret_name} pattern.
  */
-public class InfluxDbConnectionFactory {
+public class InfluxDbConnectionFactory
+{
     private static final Logger logger = LoggerFactory.getLogger(InfluxDbConnectionFactory.class);
     private static final Gson GSON = new Gson();
     private static final HttpClient HTTP = HttpClient.newHttpClient();
@@ -68,27 +63,29 @@ public class InfluxDbConnectionFactory {
     private final Map<String, String> configOptions;
     private FederationRequestHandler handler;
 
-    public InfluxDbConnectionFactory(final Map<String, String> configOptions, final FederationRequestHandler handler) {
+    public InfluxDbConnectionFactory(final Map<String, String> configOptions, final FederationRequestHandler handler)
+    {
         this.configOptions = configOptions;
         this.handler = handler;
     }
 
     /**
-     * Sets the handler reference for secret resolution. Used when the handler
-     * cannot be passed at construction time (e.g., RecordHandler passes itself
-     * after super() completes).
+     * Sets the handler reference for secret resolution. Used when the handler cannot be passed at construction time (e.g., RecordHandler passes itself after
+     * super() completes).
      */
-    public void setHandler(final FederationRequestHandler handler) {
+    public void setHandler(final FederationRequestHandler handler)
+    {
         this.handler = handler;
     }
 
     /**
      * Creates an InfluxDBClient for the given database.
-     * 
-     * @param database the database to connect to, or null to use the configured
-     *                 default
+     *
+     * @param database
+     *            the database to connect to, or null to use the configured default
      */
-    public InfluxDBClient getClient(final String database) {
+    public InfluxDBClient getClient(final String database)
+    {
         final String host = configOptions.get(ENV_INFLUXDB_HOST);
         if (host == null || host.isEmpty()) {
             throw new IllegalArgumentException("Missing required env var: " + ENV_INFLUXDB_HOST);
@@ -104,13 +101,13 @@ public class InfluxDbConnectionFactory {
     }
 
     /**
-     * Resolves a lowercased schema name back to the original database name.
-     * Athena lowercases all identifiers, but InfluxDB is case-sensitive.
-     * 
+     * Resolves a lowercased schema name back to the original database name. Athena lowercases all identifiers, but InfluxDB is case-sensitive.
+     *
      * @throws InterruptedException
      * @throws IOException
      */
-    public String resolveDatabase(final String schemaName) throws IOException, InterruptedException {
+    public String resolveDatabase(final String schemaName) throws IOException, InterruptedException
+    {
         final String configuredDb = this.configOptions.getOrDefault("influxdb_database", "");
         if (!configuredDb.isEmpty() && configuredDb.equalsIgnoreCase(schemaName)) {
             return configuredDb;
@@ -120,10 +117,10 @@ public class InfluxDbConnectionFactory {
     }
 
     /**
-     * Resolves a lowercased table name back to the original case by querying
-     * information_schema given an already-resolved database.
+     * Resolves a lowercased table name back to the original case by querying information_schema given an already-resolved database.
      */
-    public String resolveTableName(final String resolvedDb, final TableName tableName) throws Exception {
+    public String resolveTableName(final String resolvedDb, final TableName tableName) throws Exception
+    {
         try (InfluxDBClient client = getClient(resolvedDb)) {
             final String sql = String.format(
                     "SELECT table_name FROM information_schema.tables WHERE table_schema = 'iox' AND lower(table_name) = '%s'",
@@ -136,7 +133,8 @@ public class InfluxDbConnectionFactory {
         }
     }
 
-    List<DatabaseInfo> listDatabases() throws IOException, InterruptedException {
+    List<DatabaseInfo> listDatabases() throws IOException, InterruptedException
+    {
         final String host = configOptions.get(ENV_INFLUXDB_HOST);
         if (host == null || host.isEmpty()) {
             throw new IllegalArgumentException("Missing required env var: " + ENV_INFLUXDB_HOST);
@@ -160,12 +158,11 @@ public class InfluxDbConnectionFactory {
     }
 
     /**
-     * Resolves the InfluxDB auth token. Supports:
-     * 1. ${secret_name} pattern — resolved via Secrets Manager, then parsed as JSON
-     * or plain string
-     * 2. Literal token value
+     * Resolves the InfluxDB auth token. Supports: 1. ${secret_name} pattern — resolved via Secrets Manager, then parsed as JSON or plain string 2. Literal
+     * token value
      */
-    String resolveToken() {
+    String resolveToken()
+    {
         final String rawToken = configOptions.get(ENV_INFLUXDB_TOKEN);
         if (rawToken == null || rawToken.isEmpty()) {
             throw new IllegalArgumentException("Missing required env var: " + ENV_INFLUXDB_TOKEN);
@@ -184,7 +181,8 @@ public class InfluxDbConnectionFactory {
                     return json.get(tokenKey).getAsString();
                 }
                 logger.warn("JSON secret does not contain key '{}', using raw value", tokenKey);
-            } catch (final Exception e) {
+            }
+            catch (final Exception e) {
                 logger.warn("Failed to parse secret as JSON, using raw value", e);
             }
         }
@@ -192,11 +190,13 @@ public class InfluxDbConnectionFactory {
         return resolved;
     }
 
-    public static final class DatabaseInfo {
+    public static final class DatabaseInfo
+    {
         @SerializedName("iox::database")
         String name;
 
-        DatabaseInfo(final String name) {
+        DatabaseInfo(final String name)
+        {
             this.name = name;
         }
     }

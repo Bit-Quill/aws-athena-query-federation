@@ -7,9 +7,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -18,31 +18,6 @@
  * #L%
  */
 package com.amazonaws.athena.connectors.influxdb;
-
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
-
-import java.time.Instant;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-import java.util.stream.Stream;
-
-import org.apache.arrow.vector.types.Types;
-import org.apache.arrow.vector.types.pojo.Field;
-import org.junit.After;
-import org.junit.AfterClass;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
-import org.testcontainers.containers.Container.ExecResult;
-import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.containers.wait.strategy.Wait;
-import org.testcontainers.utility.DockerImageName;
 
 import com.amazonaws.athena.connector.lambda.data.BlockAllocator;
 import com.amazonaws.athena.connector.lambda.data.BlockAllocatorImpl;
@@ -56,11 +31,36 @@ import com.amazonaws.athena.connector.lambda.metadata.ListTablesResponse;
 import com.amazonaws.athena.connector.lambda.security.FederatedIdentity;
 import com.influxdb.v3.client.InfluxDBClient;
 import com.influxdb.v3.client.Point;
+import org.apache.arrow.vector.types.Types;
+import org.apache.arrow.vector.types.pojo.Field;
+import org.junit.After;
+import org.junit.AfterClass;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
+import org.testcontainers.containers.Container.ExecResult;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.wait.strategy.Wait;
+import org.testcontainers.utility.DockerImageName;
+
+import java.time.Instant;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Stream;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 /**
  * Integration test that runs against a local InfluxDB 3 Core container.
  */
-public class InfluxDbLocalIntegrationTest {
+public class InfluxDbLocalIntegrationTest
+{
     private static final FederatedIdentity IDENTITY = new FederatedIdentity("arn", "account",
             Collections.<String, String>emptyMap(), Collections.<String>emptyList(),
             Collections.<String, String>emptyMap());
@@ -75,8 +75,9 @@ public class InfluxDbLocalIntegrationTest {
     private static String database = "testdb";
 
     @BeforeClass
-    @SuppressWarnings({ "resource", "rawtypes" })
-    public static void startContainer() throws Exception {
+    @SuppressWarnings({"resource", "rawtypes"})
+    public static void startContainer() throws Exception
+    {
         // InfluxDB v3 core setup.
         influxDBV3Container = new GenericContainer(DockerImageName.parse("influxdb:3-core"))
                 .withExposedPorts(8181)
@@ -130,7 +131,8 @@ public class InfluxDbLocalIntegrationTest {
         configOptions.put("spill_prefix", "test-prefix");
     }
 
-    private static void seedTestData() throws Exception {
+    private static void seedTestData() throws Exception
+    {
         try (InfluxDBClient writeClient = InfluxDBClient.getInstance(host, influxDBV3Token.toCharArray(), database)) {
             final Instant now = Instant.now();
             writeClient.writePoints(List.of(
@@ -159,27 +161,31 @@ public class InfluxDbLocalIntegrationTest {
     }
 
     @Before
-    public void setUpHandler() {
+    public void setUpHandler()
+    {
         allocator = new BlockAllocatorImpl();
         handler = new InfluxDbMetadataHandler(configOptions);
     }
 
     @After
-    public void tearDownHandler() {
+    public void tearDownHandler()
+    {
         if (allocator != null) {
             allocator.close();
         }
     }
 
     @AfterClass
-    public static void stopContainer() {
+    public static void stopContainer()
+    {
         if (influxDBV3Container != null) {
             influxDBV3Container.close();
         }
     }
 
     @Test
-    public void testListSchemasDefault() throws Exception {
+    public void testListSchemasDefault() throws Exception
+    {
         final ListSchemasResponse response = handler.doListSchemaNames(
                 allocator,
                 new ListSchemasRequest(IDENTITY, "queryId", "catalog"));
@@ -190,7 +196,8 @@ public class InfluxDbLocalIntegrationTest {
     }
 
     @Test
-    public void testListSchemasMultiple() throws Exception {
+    public void testListSchemasMultiple() throws Exception
+    {
         // Set up config options, leaving out "influxdb_database". Doing this causes
         // all databases to be discoverable.
         final HashMap<String, String> newConfigOptions = new HashMap<>();
@@ -218,7 +225,8 @@ public class InfluxDbLocalIntegrationTest {
     }
 
     @Test
-    public void testListTables() throws Exception {
+    public void testListTables() throws Exception
+    {
         final ListTablesResponse response = handler.doListTables(
                 allocator,
                 new ListTablesRequest(IDENTITY, "queryId", "catalog", "testdb",
@@ -236,7 +244,8 @@ public class InfluxDbLocalIntegrationTest {
     }
 
     @Test
-    public void testGetTableSchema() throws Exception {
+    public void testGetTableSchema() throws Exception
+    {
         final GetTableResponse response = handler.doGetTable(
                 allocator,
                 new GetTableRequest(IDENTITY, "queryId", "catalog",

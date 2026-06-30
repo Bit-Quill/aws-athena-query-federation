@@ -7,9 +7,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -18,23 +18,6 @@
  * #L%
  */
 package com.amazonaws.athena.connectors.influxdb;
-
-import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.SOURCE_TYPE;
-
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Set;
-import java.util.stream.Stream;
-
-import org.apache.arrow.util.VisibleForTesting;
-import org.apache.arrow.vector.types.Types;
-import org.apache.arrow.vector.types.pojo.Schema;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import com.amazonaws.athena.connector.lambda.QueryStatusChecker;
 import com.amazonaws.athena.connector.lambda.data.BlockAllocator;
@@ -65,17 +48,35 @@ import com.amazonaws.athena.connector.lambda.security.EncryptionKeyFactory;
 import com.amazonaws.athena.connectors.influxdb.InfluxDbConnectionFactory.DatabaseInfo;
 import com.google.common.collect.ImmutableMap;
 import com.influxdb.v3.client.InfluxDBClient;
-
+import org.apache.arrow.util.VisibleForTesting;
+import org.apache.arrow.vector.types.Types;
+import org.apache.arrow.vector.types.pojo.Schema;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.athena.AthenaClient;
 import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Stream;
+
+import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.SOURCE_TYPE;
+
 public class InfluxDbMetadataHandler
-        extends MetadataHandler {
+        extends
+            MetadataHandler
+{
     private static final Logger logger = LoggerFactory.getLogger(InfluxDbMetadataHandler.class);
 
     private final InfluxDbConnectionFactory connectionFactory;
 
-    public InfluxDbMetadataHandler(final Map<String, String> configOptions) {
+    public InfluxDbMetadataHandler(final Map<String, String> configOptions)
+    {
         super(SOURCE_TYPE, configOptions);
         this.connectionFactory = new InfluxDbConnectionFactory(configOptions, this);
     }
@@ -88,14 +89,16 @@ public class InfluxDbMetadataHandler
             final AthenaClient athena,
             final String spillBucket,
             final String spillPrefix,
-            final Map<String, String> configOptions) {
+            final Map<String, String> configOptions)
+    {
         super(keyFactory, secretsManager, athena, SOURCE_TYPE, spillBucket, spillPrefix, configOptions);
         this.connectionFactory = connectionFactory;
     }
 
     @Override
     public GetDataSourceCapabilitiesResponse doGetDataSourceCapabilities(final BlockAllocator allocator,
-            final GetDataSourceCapabilitiesRequest request) {
+            final GetDataSourceCapabilitiesRequest request)
+    {
         final ImmutableMap.Builder<String, List<OptimizationSubType>> capabilities = ImmutableMap.builder();
 
         capabilities.put(DataSourceOptimizations.SUPPORTS_FILTER_PUSHDOWN.withSupportedSubTypes(
@@ -115,7 +118,8 @@ public class InfluxDbMetadataHandler
 
     @Override
     public ListSchemasResponse doListSchemaNames(final BlockAllocator allocator, final ListSchemasRequest request)
-            throws Exception {
+            throws Exception
+    {
         logger.info("doListSchemaNames: catalog={}", request.getCatalogName());
         final Set<String> schemas = new HashSet<>();
         final String defaultDb = this.configOptions.getOrDefault("influxdb_database", "");
@@ -139,7 +143,8 @@ public class InfluxDbMetadataHandler
 
     @Override
     public ListTablesResponse doListTables(final BlockAllocator allocator, final ListTablesRequest request)
-            throws Exception {
+            throws Exception
+    {
         logger.info("doListTables: catalog={}, schema={}", request.getCatalogName(), request.getSchemaName());
         final List<TableName> tables = new ArrayList<>();
         try (InfluxDBClient client = connectionFactory
@@ -159,7 +164,8 @@ public class InfluxDbMetadataHandler
 
     @Override
     public GetTableResponse doGetTable(final BlockAllocator allocator, final GetTableRequest request)
-            throws Exception {
+            throws Exception
+    {
         logger.info("doGetTable: catalog={}, table={}", request.getCatalogName(), request.getTableName());
         final String resolvedDb = connectionFactory.resolveDatabase(request.getTableName().getSchemaName());
         final String resolvedTable = connectionFactory.resolveTableName(resolvedDb, request.getTableName());
@@ -181,7 +187,8 @@ public class InfluxDbMetadataHandler
                         schemaBuilder.addField(colName,
                                 new org.apache.arrow.vector.types.pojo.ArrowType.Timestamp(
                                         org.apache.arrow.vector.types.TimeUnit.MILLISECOND, "UTC"));
-                    } else {
+                    }
+                    else {
                         schemaBuilder.addField(colName, minorType.getType());
                     }
                 });
@@ -194,7 +201,8 @@ public class InfluxDbMetadataHandler
     @Override
     public void getPartitions(final BlockWriter blockWriter, final GetTableLayoutRequest request,
             final QueryStatusChecker queryStatusChecker)
-            throws Exception {
+            throws Exception
+    {
         // No partitioning — single partition
         blockWriter.writeRows((block, rowNum) -> {
             block.setValue("partition", rowNum, "0");
@@ -204,13 +212,15 @@ public class InfluxDbMetadataHandler
 
     @Override
     public GetSplitsResponse doGetSplits(final BlockAllocator allocator, final GetSplitsRequest request)
-            throws Exception {
+            throws Exception
+    {
         // Single split — InfluxDB handles parallelism internally
         final Split split = Split.newBuilder(makeSpillLocation(request), makeEncryptionKey()).build();
         return new GetSplitsResponse(request.getCatalogName(), split);
     }
 
-    static Types.MinorType toArrowType(final String influxType) {
+    static Types.MinorType toArrowType(final String influxType)
+    {
         // InfluxDB 3 (DataFusion) returns types like:
         // "Dictionary(Int32, Utf8)" for tags
         // "Timestamp(ns)" or "Timestamp(Nanosecond, None)" for time
@@ -226,24 +236,24 @@ public class InfluxDbMetadataHandler
             return Types.MinorType.TIMESTAMPMILLITZ;
         }
         switch (upper) {
-            case "FLOAT64":
-            case "DOUBLE":
-            case "FLOAT8":
+            case "FLOAT64" :
+            case "DOUBLE" :
+            case "FLOAT8" :
                 return Types.MinorType.FLOAT8;
-            case "INT64":
-            case "BIGINT":
-            case "INTEGER":
-            case "INT":
-            case "UINT64":
+            case "INT64" :
+            case "BIGINT" :
+            case "INTEGER" :
+            case "INT" :
+            case "UINT64" :
                 return Types.MinorType.BIGINT;
-            case "BOOLEAN":
-            case "BOOL":
+            case "BOOLEAN" :
+            case "BOOL" :
                 return Types.MinorType.BIT;
-            case "UTF8":
-            case "VARCHAR":
-            case "STRING":
+            case "UTF8" :
+            case "VARCHAR" :
+            case "STRING" :
                 return Types.MinorType.VARCHAR;
-            default:
+            default :
                 return Types.MinorType.VARCHAR;
         }
     }

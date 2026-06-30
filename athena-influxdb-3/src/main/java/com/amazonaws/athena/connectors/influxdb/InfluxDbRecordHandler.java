@@ -7,9 +7,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -19,7 +19,21 @@
  */
 package com.amazonaws.athena.connectors.influxdb;
 
-import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.SOURCE_TYPE;
+import com.amazonaws.athena.connector.lambda.QueryStatusChecker;
+import com.amazonaws.athena.connector.lambda.data.Block;
+import com.amazonaws.athena.connector.lambda.data.BlockSpiller;
+import com.amazonaws.athena.connector.lambda.handlers.RecordHandler;
+import com.amazonaws.athena.connector.lambda.records.ReadRecordsRequest;
+import com.influxdb.v3.client.InfluxDBClient;
+import org.apache.arrow.util.VisibleForTesting;
+import org.apache.arrow.vector.types.Types;
+import org.apache.arrow.vector.types.pojo.Field;
+import org.apache.arrow.vector.types.pojo.Schema;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.services.athena.AthenaClient;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -29,32 +43,19 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 
-import org.apache.arrow.util.VisibleForTesting;
-import org.apache.arrow.vector.types.Types;
-import org.apache.arrow.vector.types.pojo.Field;
-import org.apache.arrow.vector.types.pojo.Schema;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import com.amazonaws.athena.connector.lambda.QueryStatusChecker;
-import com.amazonaws.athena.connector.lambda.data.Block;
-import com.amazonaws.athena.connector.lambda.data.BlockSpiller;
-import com.amazonaws.athena.connector.lambda.handlers.RecordHandler;
-import com.amazonaws.athena.connector.lambda.records.ReadRecordsRequest;
-import com.influxdb.v3.client.InfluxDBClient;
-
-import software.amazon.awssdk.services.athena.AthenaClient;
-import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
+import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.SOURCE_TYPE;
 
 public class InfluxDbRecordHandler
-        extends RecordHandler {
+        extends
+            RecordHandler
+{
     private static final Logger logger = LoggerFactory.getLogger(InfluxDbRecordHandler.class);
     private static final ZoneId UTC = ZoneId.of("UTC");
 
     private final InfluxDbConnectionFactory connectionFactory;
 
-    public InfluxDbRecordHandler(final Map<String, String> configOptions) {
+    public InfluxDbRecordHandler(final Map<String, String> configOptions)
+    {
         this(S3Client.create(), SecretsManagerClient.create(), AthenaClient.create(),
                 new InfluxDbConnectionFactory(configOptions, null),
                 configOptions);
@@ -66,7 +67,8 @@ public class InfluxDbRecordHandler
             final SecretsManagerClient secretsManager,
             final AthenaClient athena,
             final InfluxDbConnectionFactory connectionFactory,
-            final Map<String, String> configOptions) {
+            final Map<String, String> configOptions)
+    {
         super(s3Client, secretsManager, athena, SOURCE_TYPE, configOptions);
         this.connectionFactory = connectionFactory;
         if (connectionFactory != null) {
@@ -77,7 +79,8 @@ public class InfluxDbRecordHandler
     @Override
     protected void readWithConstraint(final BlockSpiller spiller, final ReadRecordsRequest recordsRequest,
             final QueryStatusChecker queryStatusChecker)
-            throws Exception {
+            throws Exception
+    {
         final Schema schema = recordsRequest.getSchema();
         String tableName = recordsRequest.getTableName().getTableName();
         final String schemaName = recordsRequest.getTableName().getSchemaName();
@@ -125,10 +128,10 @@ public class InfluxDbRecordHandler
     }
 
     /**
-     * Converts a timestamp value from InfluxDB into a ZonedDateTime.
-     * BlockUtils.setValue for TIMESTAMPMILLITZ expects ZonedDateTime.
+     * Converts a timestamp value from InfluxDB into a ZonedDateTime. BlockUtils.setValue for TIMESTAMPMILLITZ expects ZonedDateTime.
      */
-    static ZonedDateTime toZonedDateTime(final Object value) {
+    static ZonedDateTime toZonedDateTime(final Object value)
+    {
         if (value instanceof ZonedDateTime) {
             return (ZonedDateTime) value;
         }
@@ -151,7 +154,8 @@ public class InfluxDbRecordHandler
         return Instant.parse(String.valueOf(value)).atZone(UTC);
     }
 
-    static long toEpochMillis(final Object value) {
+    static long toEpochMillis(final Object value)
+    {
         return toZonedDateTime(value).toInstant().toEpochMilli();
     }
 }
