@@ -182,7 +182,7 @@ public class InfluxDbConnectionFactory
                 logger.warn("JSON secret does not contain key '{}', using raw value", tokenKey);
             }
             catch (final Exception e) {
-                logger.warn("Failed to parse secret as JSON, using raw value", e);
+                logger.warn("Failed to parse secret as JSON, using raw value");
             }
         }
 
