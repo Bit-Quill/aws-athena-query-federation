@@ -105,4 +105,16 @@ public class InfluxDbConnectionFactoryTest
         final InfluxDbConnectionFactory factory = new InfluxDbConnectionFactory(config, mockHandler);
         factory.resolveToken();
     }
+
+    @Test
+    public void testResolveDatabaseRestoresOriginalCase() throws Exception
+    {
+        final Map<String, String> config = new HashMap<>();
+        config.put("INFLUXDB3_HOST_URL", "https://localhost:8086");
+        config.put("INFLUXDB3_AUTH_TOKEN", "my-plain-token");
+        config.put("influxdb_database", "MyDatabase");
+
+        final InfluxDbConnectionFactory factory = new InfluxDbConnectionFactory(config, mockHandler);
+        assertEquals("MyDatabase", factory.resolveDatabase("mydatabase"));
+    }
 }

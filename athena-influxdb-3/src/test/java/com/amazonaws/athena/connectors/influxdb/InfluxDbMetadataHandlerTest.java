@@ -43,6 +43,7 @@ import java.util.Map;
 import java.util.stream.Stream;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
@@ -131,6 +132,36 @@ public class InfluxDbMetadataHandlerTest
         assertEquals(2, response.getSchemas().size());
         assertTrue(response.getSchemas().contains("testdb"));
         assertTrue(response.getSchemas().contains("metrics"));
+    }
+
+    @Test
+    public void testDoListSchemaNamesLowercaseConfiguredDatabase() throws Exception
+    {
+        final Map<String, String> config = new HashMap<>();
+        config.put("spill_bucket", "test-bucket");
+        config.put("spill_prefix", "test-prefix");
+        config.put("INFLUXDB3_HOST_URL", "https://localhost:8086");
+        config.put("INFLUXDB3_AUTH_TOKEN", "test-token");
+        config.put("influxdb_database", "MyDatabase");
+
+        handler = new InfluxDbMetadataHandler(
+                mockFactory,
+                new com.amazonaws.athena.connector.lambda.security.LocalKeyFactory(),
+                mock(software.amazon.awssdk.services.secretsmanager.SecretsManagerClient.class),
+                mock(software.amazon.awssdk.services.athena.AthenaClient.class),
+                "test-bucket",
+                "test-prefix",
+                config);
+
+        final ListSchemasResponse response = handler.doListSchemaNames(
+                allocator,
+                new ListSchemasRequest(IDENTITY, "queryId", "catalog"));
+
+        // Athena should receive the lowercased schema name.
+        assertEquals(1, response.getSchemas().size());
+        assertTrue(response.getSchemas().contains("mydatabase"));
+        // Athena should never receive the original, mixed-case value.
+        assertFalse(response.getSchemas().contains("MyDatabase"));
     }
 
     @Test
