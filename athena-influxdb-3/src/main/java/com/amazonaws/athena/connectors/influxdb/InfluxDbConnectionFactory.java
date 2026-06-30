@@ -122,10 +122,9 @@ public class InfluxDbConnectionFactory
     public String resolveTableName(final String resolvedDb, final TableName tableName) throws Exception
     {
         try (InfluxDBClient client = getClient(resolvedDb)) {
-            final String sql = String.format(
-                    "SELECT table_name FROM information_schema.tables WHERE table_schema = 'iox' AND lower(table_name) = '%s'",
-                    tableName.getTableName().toLowerCase(Locale.ROOT));
-            try (Stream<Object[]> stream = client.query(sql)) {
+            final Map<String, Object> parameters = Map.of("table_name", tableName.getTableName().toLowerCase(Locale.ROOT));
+            final String sql = "SELECT table_name FROM information_schema.tables WHERE table_schema = 'iox' AND lower(table_name) = $table_name";
+            try (Stream<Object[]> stream = client.query(sql, parameters)) {
                 return stream.map(row -> String.valueOf(row[0]))
                         .findFirst()
                         .orElse(tableName.getTableName());

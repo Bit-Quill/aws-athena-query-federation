@@ -241,8 +241,8 @@ public class InfluxDbQueryBuilderTest
         final Map<String, String> config = new HashMap<>();
         config.put("spill_bucket", "test-bucket");
         config.put("spill_prefix", "test-prefix");
-        config.put("influxdb_host", "https://localhost:8086");
-        config.put("influxdb_token", "test-token");
+        config.put("INFLUXDB3_HOST_URL", "https://localhost:8086");
+        config.put("INFLUXDB3_AUTH_TOKEN", "test-token");
         config.put("influxdb_database", "testdb");
 
         final com.influxdb.v3.client.InfluxDBClient mockClient = mock(

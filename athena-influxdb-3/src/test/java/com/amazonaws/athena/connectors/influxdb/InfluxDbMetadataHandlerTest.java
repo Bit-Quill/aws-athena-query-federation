@@ -45,6 +45,7 @@ import java.util.stream.Stream;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
@@ -72,8 +73,8 @@ public class InfluxDbMetadataHandlerTest
         final Map<String, String> config = new HashMap<>();
         config.put("spill_bucket", "test-bucket");
         config.put("spill_prefix", "test-prefix");
-        config.put("influxdb_host", "https://localhost:8086");
-        config.put("influxdb_token", "test-token");
+        config.put("INFLUXDB3_HOST_URL", "https://localhost:8086");
+        config.put("INFLUXDB3_AUTH_TOKEN", "test-token");
         config.put("influxdb_database", "testdb");
 
         handler = new InfluxDbMetadataHandler(
@@ -109,8 +110,8 @@ public class InfluxDbMetadataHandlerTest
         final Map<String, String> config = new HashMap<>();
         config.put("spill_bucket", "test-bucket");
         config.put("spill_prefix", "test-prefix");
-        config.put("influxdb_host", "https://localhost:8086");
-        config.put("influxdb_token", "test-token");
+        config.put("INFLUXDB3_HOST_URL", "https://localhost:8086");
+        config.put("INFLUXDB3_AUTH_TOKEN", "test-token");
 
         handler = new InfluxDbMetadataHandler(
                 mockFactory,
@@ -159,7 +160,7 @@ public class InfluxDbMetadataHandlerTest
                 new Object[] { "usage_idle", "DOUBLE" }
         };
         // First call resolves table name, second call gets columns
-        when(mockClient.query(anyString()))
+        when(mockClient.query(anyString(), anyMap()))
                 .thenReturn(Stream.of(columnRows));
 
         final GetTableResponse response = handler.doGetTable(

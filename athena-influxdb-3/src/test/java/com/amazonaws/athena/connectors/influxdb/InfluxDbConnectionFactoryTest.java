@@ -44,8 +44,8 @@ public class InfluxDbConnectionFactoryTest
     public void testResolveTokenPlainString()
     {
         final Map<String, String> config = new HashMap<>();
-        config.put("influxdb_host", "https://localhost:8086");
-        config.put("influxdb_token", "my-plain-token");
+        config.put("INFLUXDB3_HOST_URL", "https://localhost:8086");
+        config.put("INFLUXDB3_AUTH_TOKEN", "my-plain-token");
 
         when(mockHandler.resolveSecrets("my-plain-token")).thenReturn("my-plain-token");
 
@@ -57,8 +57,8 @@ public class InfluxDbConnectionFactoryTest
     public void testResolveTokenJsonWithDefaultKey()
     {
         final Map<String, String> config = new HashMap<>();
-        config.put("influxdb_host", "https://localhost:8086");
-        config.put("influxdb_token", "${my-secret}");
+        config.put("INFLUXDB3_HOST_URL", "https://localhost:8086");
+        config.put("INFLUXDB3_AUTH_TOKEN", "${my-secret}");
 
         when(mockHandler.resolveSecrets("${my-secret}"))
                 .thenReturn("{\"token\": \"secret-token-value\", \"other\": \"stuff\"}");
@@ -71,9 +71,9 @@ public class InfluxDbConnectionFactoryTest
     public void testResolveTokenJsonWithCustomKey()
     {
         final Map<String, String> config = new HashMap<>();
-        config.put("influxdb_host", "https://localhost:8086");
-        config.put("influxdb_token", "${my-secret}");
-        config.put("influxdb_token_key", "api_key");
+        config.put("INFLUXDB3_HOST_URL", "https://localhost:8086");
+        config.put("INFLUXDB3_AUTH_TOKEN", "${my-secret}");
+        config.put("INFLUXDB3_AUTH_TOKEN_KEY", "api_key");
 
         when(mockHandler.resolveSecrets("${my-secret}"))
                 .thenReturn("{\"api_key\": \"custom-key-value\"}");
@@ -86,8 +86,8 @@ public class InfluxDbConnectionFactoryTest
     public void testResolveTokenSecretsManagerPlainString()
     {
         final Map<String, String> config = new HashMap<>();
-        config.put("influxdb_host", "https://localhost:8086");
-        config.put("influxdb_token", "${my-secret}");
+        config.put("INFLUXDB3_HOST_URL", "https://localhost:8086");
+        config.put("INFLUXDB3_AUTH_TOKEN", "${my-secret}");
 
         // Secrets Manager returns a plain string, not JSON
         when(mockHandler.resolveSecrets("${my-secret}")).thenReturn("plain-secret-value");
@@ -100,7 +100,7 @@ public class InfluxDbConnectionFactoryTest
     public void testResolveTokenMissingThrows()
     {
         final Map<String, String> config = new HashMap<>();
-        config.put("influxdb_host", "https://localhost:8086");
+        config.put("INFLUXDB3_HOST_URL", "https://localhost:8086");
 
         final InfluxDbConnectionFactory factory = new InfluxDbConnectionFactory(config, mockHandler);
         factory.resolveToken();

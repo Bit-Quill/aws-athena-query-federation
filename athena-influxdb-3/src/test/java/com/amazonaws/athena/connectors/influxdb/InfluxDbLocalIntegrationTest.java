@@ -124,8 +124,8 @@ public class InfluxDbLocalIntegrationTest
 
         // Set config options that are necessary for the connector.
         configOptions = new HashMap<>();
-        configOptions.put("influxdb_host", host);
-        configOptions.put("influxdb_token", influxDBV3Token);
+        configOptions.put("INFLUXDB3_HOST_URL", host);
+        configOptions.put("INFLUXDB3_AUTH_TOKEN", influxDBV3Token);
         configOptions.put("influxdb_database", database);
         configOptions.put("spill_bucket", "test-bucket");
         configOptions.put("spill_prefix", "test-prefix");
@@ -201,8 +201,8 @@ public class InfluxDbLocalIntegrationTest
         // Set up config options, leaving out "influxdb_database". Doing this causes
         // all databases to be discoverable.
         final HashMap<String, String> newConfigOptions = new HashMap<>();
-        newConfigOptions.put("influxdb_host", host);
-        newConfigOptions.put("influxdb_token", influxDBV3Token);
+        newConfigOptions.put("INFLUXDB3_HOST_URL", host);
+        newConfigOptions.put("INFLUXDB3_AUTH_TOKEN", influxDBV3Token);
         newConfigOptions.put("spill_bucket", "test-bucket");
         newConfigOptions.put("spill_prefix", "test-prefix");
         handler = new InfluxDbMetadataHandler(newConfigOptions);

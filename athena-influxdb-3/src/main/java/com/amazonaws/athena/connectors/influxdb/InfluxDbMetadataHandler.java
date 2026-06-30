@@ -175,10 +175,9 @@ public class InfluxDbMetadataHandler
         schemaBuilder.addMetadata("originalTableName", resolvedTable);
         try (InfluxDBClient client = connectionFactory
                 .getClient(resolvedDb)) {
-            final String sql = String.format(
-                    "SELECT column_name, data_type FROM information_schema.columns WHERE lower(table_name) = '%s'",
-                    request.getTableName().getTableName().toLowerCase(Locale.ROOT));
-            try (Stream<Object[]> stream = client.query(sql)) {
+            final Map<String, Object> parameters = Map.of("table_name", request.getTableName().getTableName().toLowerCase(Locale.ROOT));
+            final String sql = "SELECT column_name, data_type FROM information_schema.columns WHERE lower(table_name) = $table_name";
+            try (Stream<Object[]> stream = client.query(sql, parameters)) {
                 stream.forEach(row -> {
                     final String colName = String.valueOf(row[0]).toLowerCase(Locale.ROOT);
                     final String dataType = String.valueOf(row[1]).toUpperCase(Locale.ROOT);
