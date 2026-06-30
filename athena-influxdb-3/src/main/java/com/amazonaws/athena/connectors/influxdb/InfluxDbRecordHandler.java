@@ -36,11 +36,13 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.SOURCE_TYPE;
@@ -51,6 +53,9 @@ public class InfluxDbRecordHandler
 {
     private static final Logger logger = LoggerFactory.getLogger(InfluxDbRecordHandler.class);
     private static final ZoneId UTC = ZoneId.of("UTC");
+
+    private static final long MAX_PLAUSIBLE_EPOCH_MILLIS =
+            LocalDate.of(2100, 1, 1).atStartOfDay(UTC).toInstant().toEpochMilli();
 
     private final InfluxDbConnectionFactory connectionFactory;
 
@@ -143,11 +148,9 @@ public class InfluxDbRecordHandler
         }
         if (value instanceof Number) {
             long val = ((Number) value).longValue();
-            // InfluxDB returns timestamps as nanoseconds since epoch.
-            // Convert to milliseconds if the value is clearly in nanoseconds (> year 2100
-            // in millis).
-            if (val > 4_102_444_800_000L) {
-                val = val / 1_000_000L;
+            if (val > MAX_PLAUSIBLE_EPOCH_MILLIS) {
+                // Too large to be milliseconds, so it must be nanoseconds.
+                val = TimeUnit.NANOSECONDS.toMillis(val);
             }
             return Instant.ofEpochMilli(val).atZone(UTC);
         }
