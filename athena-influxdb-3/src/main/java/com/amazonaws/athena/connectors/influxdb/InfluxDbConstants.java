@@ -26,8 +26,8 @@ public final class InfluxDbConstants
     }
 
     public static final String SOURCE_TYPE = "influxdb";
-    public static final String ENV_INFLUXDB_HOST = "influxdb_host";
-    public static final String ENV_INFLUXDB_TOKEN = "influxdb_token";
-    public static final String ENV_INFLUXDB_TOKEN_KEY = "influxdb_token_key";
+    public static final String ENV_INFLUXDB_HOST = "INFLUXDB3_HOST_URL";
+    public static final String ENV_INFLUXDB_TOKEN = "INFLUXDB3_AUTH_TOKEN";
+    public static final String ENV_INFLUXDB_TOKEN_KEY = "INFLUXDB3_AUTH_TOKEN_KEY";
     public static final String DEFAULT_TOKEN_KEY = "token";
 }
