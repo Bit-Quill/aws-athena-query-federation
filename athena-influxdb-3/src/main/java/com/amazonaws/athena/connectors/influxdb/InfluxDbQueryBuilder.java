@@ -19,6 +19,7 @@
  */
 package com.amazonaws.athena.connectors.influxdb;
 
+import com.amazonaws.athena.connector.lambda.data.DateTimeFormatterUtil;
 import com.amazonaws.athena.connector.lambda.domain.predicate.Constraints;
 import com.amazonaws.athena.connector.lambda.domain.predicate.OrderByField;
 import com.amazonaws.athena.connector.lambda.domain.predicate.Range;
@@ -31,7 +32,6 @@ import com.amazonaws.athena.connector.lambda.domain.predicate.expression.Variabl
 import com.amazonaws.athena.connector.lambda.domain.predicate.functions.FunctionName;
 import com.amazonaws.athena.connector.lambda.domain.predicate.functions.StandardFunctions;
 import org.apache.arrow.vector.complex.reader.FieldReader;
-import org.apache.arrow.vector.types.TimeUnit;
 import org.apache.arrow.vector.types.Types;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
@@ -41,6 +41,7 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -124,10 +125,11 @@ public class InfluxDbQueryBuilder
         }
         final long low = Long.parseLong(timeLowerMillis);
         final long high = Long.parseLong(timeUpperMillis);
-        final ArrowType timestampType = new ArrowType.Timestamp(TimeUnit.MILLISECOND, "UTC");
         final String col = quote(InfluxDbConstants.DEFAULT_TIME_COLUMN);
-        return "(" + col + " >= " + toLiteral(low, timestampType)
-                + " AND " + col + " < " + toLiteral(high, timestampType) + ")";
+        // Split bounds are already plain epoch millis (decoded in getPartitions),
+        // so format them directly rather than through the packing-aware path.
+        return "(" + col + " >= " + timestampLiteral(low)
+                + " AND " + col + " < " + timestampLiteral(high) + ")";
     }
 
     /**
@@ -215,10 +217,10 @@ public class InfluxDbQueryBuilder
                 if (!range.getLow().isLowerUnbounded()) {
                     switch (range.getLow().getBound()) {
                         case ABOVE :
-                            rangeConjuncts.add(quote(columnName) + " > " + toLiteral(range.getLow().getValue(), type));
+                            rangeConjuncts.add(quote(columnName) + " > " + constraintLiteral(range.getLow().getValue(), type));
                             break;
                         case EXACTLY :
-                            rangeConjuncts.add(quote(columnName) + " >= " + toLiteral(range.getLow().getValue(), type));
+                            rangeConjuncts.add(quote(columnName) + " >= " + constraintLiteral(range.getLow().getValue(), type));
                             break;
                         default :
                             break;
@@ -228,10 +230,10 @@ public class InfluxDbQueryBuilder
                     switch (range.getHigh().getBound()) {
                         case EXACTLY :
                             rangeConjuncts
-                                    .add(quote(columnName) + " <= " + toLiteral(range.getHigh().getValue(), type));
+                                    .add(quote(columnName) + " <= " + constraintLiteral(range.getHigh().getValue(), type));
                             break;
                         case BELOW :
-                            rangeConjuncts.add(quote(columnName) + " < " + toLiteral(range.getHigh().getValue(), type));
+                            rangeConjuncts.add(quote(columnName) + " < " + constraintLiteral(range.getHigh().getValue(), type));
                             break;
                         default :
                             break;
@@ -245,11 +247,11 @@ public class InfluxDbQueryBuilder
 
         // Single values as equality or IN
         if (singleValues.size() == 1) {
-            disjuncts.add(quote(columnName) + " = " + toLiteral(singleValues.get(0), type));
+            disjuncts.add(quote(columnName) + " = " + constraintLiteral(singleValues.get(0), type));
         }
         else if (singleValues.size() > 1) {
             final String values = singleValues.stream()
-                    .map(v -> toLiteral(v, type))
+                    .map(v -> constraintLiteral(v, type))
                     .collect(Collectors.joining(", "));
             disjuncts.add(quote(columnName) + " IN (" + values + ")");
         }
@@ -342,7 +344,55 @@ public class InfluxDbQueryBuilder
         }
         reader.setPosition(0);
         final Object value = reader.readObject();
-        return toLiteral(value, expr.getType());
+        return constraintLiteral(value, expr.getType());
+    }
+
+    /**
+     * Decodes an Athena TIMESTAMP-with-time-zone constraint value to epoch millis.
+     * Athena (Trino engine) packs such values as {@code (millisUtc << 12) | timeZoneKey};
+     * the SDK's {@link DateTimeFormatterUtil#constructZonedDateTime} unpacks that. Other
+     * temporal representations are handled directly for robustness.
+     */
+    static long constraintEpochMillis(final Object value, final ArrowType.Timestamp arrowType)
+    {
+        if (value instanceof Number) {
+            return DateTimeFormatterUtil.constructZonedDateTime(((Number) value).longValue(), arrowType)
+                    .toInstant().toEpochMilli();
+        }
+        if (value instanceof ZonedDateTime) {
+            return ((ZonedDateTime) value).toInstant().toEpochMilli();
+        }
+        if (value instanceof Instant) {
+            return ((Instant) value).toEpochMilli();
+        }
+        if (value instanceof LocalDateTime) {
+            return ((LocalDateTime) value).toInstant(ZoneOffset.UTC).toEpochMilli();
+        }
+        return Instant.parse(String.valueOf(value)).toEpochMilli();
+    }
+
+    /**
+     * Renders a plain epoch-millisecond value as a SQL {@code TIMESTAMP} literal
+     * (UTC, millisecond precision).
+     */
+    static String timestampLiteral(final long epochMillis)
+    {
+        return "TIMESTAMP '" + DateTimeFormatter.ISO_INSTANT.format(Instant.ofEpochMilli(epochMillis)) + "'";
+    }
+
+    /**
+     * Renders a constraint value (as delivered by Athena) as a SQL literal. Athena
+     * packs TIMESTAMP-with-time-zone values (millisUtc &lt;&lt; 12 | tzKey), so those
+     * are decoded here before formatting; all other types delegate to {@link #toLiteral}.
+     */
+    static String constraintLiteral(final Object value, final ArrowType type)
+    {
+        if (value != null
+                && Types.getMinorTypeForArrowType(type) == Types.MinorType.TIMESTAMPMILLITZ
+                && type instanceof ArrowType.Timestamp) {
+            return timestampLiteral(constraintEpochMillis(value, (ArrowType.Timestamp) type));
+        }
+        return toLiteral(value, type);
     }
 
     /**
@@ -362,9 +412,10 @@ public class InfluxDbQueryBuilder
             case BIT :
                 return Boolean.TRUE.equals(value) ? "true" : "false";
             case TIMESTAMPMILLITZ : {
-                // Athena delivers TIMESTAMPMILLITZ predicate values as epoch millis (Long).
-                // ZonedDateTime/Instant is also possible. Normalize to UTC.
-                Instant instant;
+                // Plain epoch-millis (or temporal) value to literal. Packed Athena
+                // constraint values are decoded upstream by constraintLiteral, so this
+                // must NOT unpack. ISO_INSTANT keeps millisecond precision (trailing 'Z').
+                final Instant instant;
                 if (value instanceof Number) {
                     instant = Instant.ofEpochMilli(((Number) value).longValue());
                 }
@@ -377,8 +428,6 @@ public class InfluxDbQueryBuilder
                 else {
                     instant = Instant.parse(String.valueOf(value));
                 }
-                // ISO_INSTANT keeps millisecond precision with a trailing 'Z'.
-                // For example, '2025-12-03T10:15:30.123Z'.
                 return "TIMESTAMP '" + DateTimeFormatter.ISO_INSTANT.format(instant) + "'";
             }
             case DATEMILLI : {

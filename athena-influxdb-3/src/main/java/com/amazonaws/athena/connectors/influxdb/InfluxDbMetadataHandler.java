@@ -56,6 +56,7 @@ import com.influxdb.v3.client.InfluxDBClient;
 import org.apache.arrow.util.VisibleForTesting;
 import org.apache.arrow.vector.complex.reader.FieldReader;
 import org.apache.arrow.vector.types.Types;
+import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.slf4j.Logger;
@@ -357,13 +358,18 @@ public class InfluxDbMetadataHandler
             return null;
         }
 
+        if (!(valueSet.getType() instanceof ArrowType.Timestamp)) {
+            return null;
+        }
+        final ArrowType.Timestamp tsType = (ArrowType.Timestamp) valueSet.getType();
+
         Range span = ((SortedRangeSet) valueSet).getSpan();
         if (span.getLow().isLowerUnbounded() || span.getHigh().isUpperUnbounded()) {
             return null;
         }
 
-        long min = InfluxDbRecordHandler.toEpochMillis(span.getLow().getValue());
-        long max = InfluxDbRecordHandler.toEpochMillis(span.getHigh().getValue());
+        long min = InfluxDbQueryBuilder.constraintEpochMillis(span.getLow().getValue(), tsType);
+        long max = InfluxDbQueryBuilder.constraintEpochMillis(span.getHigh().getValue(), tsType);
         if (min >= max) {
             return null;
         }

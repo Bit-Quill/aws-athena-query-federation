@@ -76,6 +76,31 @@ public class InfluxDbQueryBuilderTest
     }
 
     @Test
+    public void testConstraintLiteralUnpacksTrinoPackedTimestamp()
+    {
+        // Athena/Trino packs TIMESTAMP WITH TIME ZONE as (millisUtc << 12 | tzKey); UTC key is 0.
+        final long millisUtc = 1764764130000L; // 2025-12-03T10:15:30Z
+        final long packed = millisUtc << 12;
+        final ArrowType.Timestamp tsType =
+                new ArrowType.Timestamp(org.apache.arrow.vector.types.TimeUnit.MILLISECOND, "UTC");
+
+        // The shared helper unpacks back to the original epoch millis.
+        assertEquals(millisUtc, InfluxDbQueryBuilder.constraintEpochMillis(packed, tsType));
+
+        // constraintLiteral decodes the packed value (not the corrupted far-future year 233142).
+        final String expected = "TIMESTAMP '"
+                + java.time.format.DateTimeFormatter.ISO_INSTANT.format(java.time.Instant.ofEpochMilli(millisUtc))
+                + "'";
+        assertEquals(expected, InfluxDbQueryBuilder.constraintLiteral(packed, tsType));
+
+        // toLiteral is the plain formatter: it treats the value as epoch millis directly.
+        assertEquals("TIMESTAMP '"
+                        + java.time.format.DateTimeFormatter.ISO_INSTANT.format(java.time.Instant.ofEpochMilli(millisUtc))
+                        + "'",
+                InfluxDbQueryBuilder.toLiteral(millisUtc, tsType));
+    }
+
+    @Test
     public void testBuildSqlWithSplitTimeBounds()
     {
         final Constraints constraints = new Constraints(new HashMap<>(), Collections.emptyList(),
