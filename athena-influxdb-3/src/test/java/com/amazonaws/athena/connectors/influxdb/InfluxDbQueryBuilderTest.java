@@ -76,6 +76,34 @@ public class InfluxDbQueryBuilderTest
     }
 
     @Test
+    public void testBuildSqlWithSplitTimeBounds()
+    {
+        final Constraints constraints = new Constraints(new HashMap<>(), Collections.emptyList(),
+                Collections.emptyList(), Constraints.DEFAULT_NO_LIMIT, null, null);
+
+        // 1-hour window (epoch millis). The per-split bound is a half-open
+        // [lower, upper) predicate on "time" expressed with TIMESTAMP literals.
+        final String sql = InfluxDbQueryBuilder.buildSql(schema, "cpu", constraints,
+                "1764764130000", "1764767730000");
+
+        assertTrue(sql.contains("WHERE"));
+        assertTrue(sql.contains("\"time\" >= TIMESTAMP '"));
+        assertTrue(sql.contains("\"time\" < TIMESTAMP '"));
+    }
+
+    @Test
+    public void testBuildSqlWithNullSplitBoundsAddsNoTimeFilter()
+    {
+        final Constraints constraints = new Constraints(new HashMap<>(), Collections.emptyList(),
+                Collections.emptyList(), Constraints.DEFAULT_NO_LIMIT, null, null);
+
+        // Single-partition fallback: null bounds must not add a WHERE clause.
+        final String sql = InfluxDbQueryBuilder.buildSql(schema, "cpu", constraints, null, null);
+
+        assertEquals("SELECT \"time\", \"host\", \"usage_idle\" FROM \"cpu\"", sql);
+    }
+
+    @Test
     public void testBuildSqlNoConstraints()
     {
         final Constraints constraints = new Constraints(new HashMap<>(), Collections.emptyList(),

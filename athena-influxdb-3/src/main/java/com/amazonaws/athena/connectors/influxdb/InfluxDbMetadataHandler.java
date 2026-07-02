@@ -20,11 +20,16 @@
 package com.amazonaws.athena.connectors.influxdb;
 
 import com.amazonaws.athena.connector.lambda.QueryStatusChecker;
+import com.amazonaws.athena.connector.lambda.data.Block;
 import com.amazonaws.athena.connector.lambda.data.BlockAllocator;
 import com.amazonaws.athena.connector.lambda.data.BlockWriter;
 import com.amazonaws.athena.connector.lambda.data.SchemaBuilder;
 import com.amazonaws.athena.connector.lambda.domain.Split;
 import com.amazonaws.athena.connector.lambda.domain.TableName;
+import com.amazonaws.athena.connector.lambda.domain.predicate.Constraints;
+import com.amazonaws.athena.connector.lambda.domain.predicate.Range;
+import com.amazonaws.athena.connector.lambda.domain.predicate.SortedRangeSet;
+import com.amazonaws.athena.connector.lambda.domain.predicate.ValueSet;
 import com.amazonaws.athena.connector.lambda.domain.predicate.functions.StandardFunctions;
 import com.amazonaws.athena.connector.lambda.handlers.MetadataHandler;
 import com.amazonaws.athena.connector.lambda.metadata.GetDataSourceCapabilitiesRequest;
@@ -49,7 +54,9 @@ import com.amazonaws.athena.connectors.influxdb.InfluxDbConnectionFactory.Databa
 import com.google.common.collect.ImmutableMap;
 import com.influxdb.v3.client.InfluxDBClient;
 import org.apache.arrow.util.VisibleForTesting;
+import org.apache.arrow.vector.complex.reader.FieldReader;
 import org.apache.arrow.vector.types.Types;
+import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -65,6 +72,10 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
 
+import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.ENABLE_QUERY_PARALLELISM;
+import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.PART_TIME_LOWER;
+import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.PART_TIME_UPPER;
+import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.QUERY_PARALLELISM_COUNT;
 import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.SOURCE_TYPE;
 
 public class InfluxDbMetadataHandler
@@ -72,6 +83,11 @@ public class InfluxDbMetadataHandler
             MetadataHandler
 {
     private static final Logger logger = LoggerFactory.getLogger(InfluxDbMetadataHandler.class);
+
+    // Split-count tuning for time-based query parallelism.
+    private static final int DEFAULT_SPLIT_COUNT = 8;
+    private static final int MIN_SPLIT_COUNT = 1;
+    private static final int MAX_SPLIT_COUNT = 16;
 
     private final InfluxDbConnectionFactory connectionFactory;
 
@@ -197,15 +213,97 @@ public class InfluxDbMetadataHandler
         return new GetTableResponse(request.getCatalogName(), request.getTableName(), schema);
     }
 
+    /**
+     * This method can be used to add additional fields to the schema of our
+     * partition response. Athena
+     * expects each partitions in the response to have a column corresponding to
+     * your partition columns.
+     * You can choose to add additional columns to that response which Athena will
+     * ignore but will pass
+     * on to you when it call GetSplits(...) for each partition.
+     *
+     * @param partitionSchemaBuilder The SchemaBuilder you can use to add additional
+     *                               columns and metadata to the
+     *                               partitions response.
+     * @param request                The GetTableLayoutResquest that triggered this
+     *                               call.
+     */
     @Override
-    public void getPartitions(final BlockWriter blockWriter, final GetTableLayoutRequest request,
-            final QueryStatusChecker queryStatusChecker)
-            throws Exception
+    public void enhancePartitionSchema(SchemaBuilder partitionSchemaBuilder, GetTableLayoutRequest request)
     {
-        // No partitioning — single partition
+        if (parallelismEnabled()) {
+            partitionSchemaBuilder.addField(PART_TIME_UPPER, Types.MinorType.BIGINT.getType());
+            partitionSchemaBuilder.addField(PART_TIME_LOWER, Types.MinorType.BIGINT.getType());
+        }
+    }
+
+    public boolean parallelismEnabled()
+    {
+        return Boolean.parseBoolean(configOptions.getOrDefault(ENABLE_QUERY_PARALLELISM, "false"));
+    }
+
+    /**
+     * Returns the number of time-based splits to generate, read from
+     * {@link InfluxDbConstants#QUERY_PARALLELISM_COUNT} and clamped to a safe
+     * range. Kept modest because the backend is a single InfluxDB instance and
+     * too many concurrent split queries can overload it. Missing, blank, or
+     * non-numeric config falls back to the default; values outside the range
+     * are clamped (so 0 or negative becomes a single split).
+     */
+    @VisibleForTesting
+    int clampedSplitCount()
+    {
+        int requested = DEFAULT_SPLIT_COUNT;
+        final String configured = configOptions.get(QUERY_PARALLELISM_COUNT);
+        if (configured != null && !configured.isBlank()) {
+            try {
+                requested = Integer.parseInt(configured.trim());
+            }
+            catch (final NumberFormatException e) {
+                logger.warn("Invalid {} value '{}'; falling back to default {}",
+                        QUERY_PARALLELISM_COUNT, configured, DEFAULT_SPLIT_COUNT);
+                requested = DEFAULT_SPLIT_COUNT;
+            }
+        }
+        return Math.max(MIN_SPLIT_COUNT, Math.min(requested, MAX_SPLIT_COUNT));
+    }
+
+    @Override
+    public void getPartitions(final BlockWriter blockWriter, final GetTableLayoutRequest request, final QueryStatusChecker queryStatusChecker) throws Exception
+    {
+        final Long[] bounds = extractTimeRange(request.getConstraints());
+        if (!parallelismEnabled() || bounds == null) {
+            // Single-partition fallback: one bucket with no time bound. The
+            // RowWriter is invoked once, so it must write every row it needs.
+            blockWriter.writeRows((block, rowNum) -> {
+                block.setValue(PART_TIME_LOWER, rowNum, null);
+                block.setValue(PART_TIME_UPPER, rowNum, null);
+                return 1;
+            });
+            return;
+        }
+
+        final long min = bounds[0];
+        final long max = bounds[1];
+        // Never create more buckets than there are milliseconds in the range.
+        final int buckets = (int) Math.max(1L, Math.min(clampedSplitCount(), max - min));
+        final long width = Math.max(1L, (max - min) / buckets);
         blockWriter.writeRows((block, rowNum) -> {
-            block.setValue("partition", rowNum, "0");
-            return 1;
+            int written = 0;
+            for (int i = 0; i < buckets; i++) {
+                final long low = min + (long) i * width;
+                if (low >= max) {
+                    break;
+                }
+                // Half-open [low, high). The final bucket extends one millisecond
+                // past max so the max timestamp is captured (readWithConstraint
+                // applies `< high`).
+                final long high = (i == buckets - 1) ? max + 1 : Math.min(max, min + (long) (i + 1) * width);
+                block.setValue(PART_TIME_LOWER, rowNum + written, low);
+                block.setValue(PART_TIME_UPPER, rowNum + written, high);
+                written++;
+            }
+            return written;
         });
     }
 
@@ -213,9 +311,64 @@ public class InfluxDbMetadataHandler
     public GetSplitsResponse doGetSplits(final BlockAllocator allocator, final GetSplitsRequest request)
             throws Exception
     {
-        // Single split — InfluxDB handles parallelism internally
-        final Split split = Split.newBuilder(makeSpillLocation(request), makeEncryptionKey()).build();
-        return new GetSplitsResponse(request.getCatalogName(), split);
+        final Block partitions = request.getPartitions();
+        // We only want to split queries when the user has included a lower and upper time bound.
+        final boolean hasBounds = hasField(partitions, PART_TIME_LOWER) && hasField(partitions, PART_TIME_UPPER);
+        final FieldReader lowReader = hasBounds ? partitions.getFieldReader(PART_TIME_LOWER) : null;
+        final FieldReader highReader = hasBounds ? partitions.getFieldReader(PART_TIME_UPPER) : null;
+
+        final Set<Split> splits = new HashSet<>();
+        for (int i = 0; i < partitions.getRowCount(); i++) {
+            final Split.Builder builder = Split.newBuilder(makeSpillLocation(request), makeEncryptionKey());
+            if (hasBounds) {
+                lowReader.setPosition(i);
+                highReader.setPosition(i);
+                // Null bounds mark the single-partition fallback (no time filter).
+                if (lowReader.isSet() && highReader.isSet()) {
+                    builder.add(PART_TIME_LOWER, String.valueOf(lowReader.readLong()));
+                    builder.add(PART_TIME_UPPER, String.valueOf(highReader.readLong()));
+                }
+            }
+            splits.add(builder.build());
+        }
+
+        if (splits.isEmpty()) {
+            // Defensive: Athena requires at least one split to read.
+            splits.add(Split.newBuilder(makeSpillLocation(request), makeEncryptionKey()).build());
+        }
+
+        return new GetSplitsResponse(request.getCatalogName(), splits);
+    }
+
+    private static boolean hasField(final Block block, final String fieldName)
+    {
+        for (final Field field : block.getSchema().getFields()) {
+            if (field.getName().equals(fieldName)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static Long[] extractTimeRange(Constraints constraints)
+    {
+        ValueSet valueSet = constraints.getSummary() == null ? null : constraints.getSummary().get("time");
+        if (!(valueSet instanceof SortedRangeSet) || valueSet.isNone()) {
+            return null;
+        }
+
+        Range span = ((SortedRangeSet) valueSet).getSpan();
+        if (span.getLow().isLowerUnbounded() || span.getHigh().isUpperUnbounded()) {
+            return null;
+        }
+
+        long min = InfluxDbRecordHandler.toEpochMillis(span.getLow().getValue());
+        long max = InfluxDbRecordHandler.toEpochMillis(span.getHigh().getValue());
+        if (min >= max) {
+            return null;
+        }
+
+        return new Long[] { min, max };
     }
 
     static Types.MinorType toArrowType(final String influxType)

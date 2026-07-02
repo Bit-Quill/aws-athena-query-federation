@@ -31,6 +31,7 @@ import com.amazonaws.athena.connector.lambda.domain.predicate.expression.Variabl
 import com.amazonaws.athena.connector.lambda.domain.predicate.functions.FunctionName;
 import com.amazonaws.athena.connector.lambda.domain.predicate.functions.StandardFunctions;
 import org.apache.arrow.vector.complex.reader.FieldReader;
+import org.apache.arrow.vector.types.TimeUnit;
 import org.apache.arrow.vector.types.Types;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
@@ -64,6 +65,18 @@ public class InfluxDbQueryBuilder
      */
     public static String buildSql(final Schema schema, final String tableName, final Constraints constraints)
     {
+        return buildSql(schema, tableName, constraints, null, null);
+    }
+
+    /**
+     * Builds a complete SQL query, additionally narrowing the query to a single
+     * time-based split via a half-open {@code [lower, upper)} predicate on the
+     * time column. The bounds are epoch-millisecond strings taken from the split
+     * properties; when either is null no time-based narrowing is applied.
+     */
+    public static String buildSql(final Schema schema, final String tableName, final Constraints constraints,
+            final String timeLowerMillis, final String timeUpperMillis)
+    {
         final StringBuilder sql = new StringBuilder();
 
         // SELECT columns
@@ -72,10 +85,18 @@ public class InfluxDbQueryBuilder
                 .collect(Collectors.joining(", "));
         sql.append("SELECT ").append(columns).append(" FROM ").append(quote(tableName));
 
-        // WHERE clause from constraints
+        // WHERE clause from constraints, plus the optional per-split time bound
+        final List<String> conjuncts = new ArrayList<>();
         final String whereClause = buildWhereClause(schema, constraints);
         if (!whereClause.isEmpty()) {
-            sql.append(" WHERE ").append(whereClause);
+            conjuncts.add(whereClause);
+        }
+        final String splitPredicate = buildSplitTimePredicate(timeLowerMillis, timeUpperMillis);
+        if (!splitPredicate.isEmpty()) {
+            conjuncts.add(splitPredicate);
+        }
+        if (!conjuncts.isEmpty()) {
+            sql.append(" WHERE ").append(String.join(" AND ", conjuncts));
         }
 
         // ORDER BY clause
@@ -90,6 +111,23 @@ public class InfluxDbQueryBuilder
 
         logger.info("buildSql: {}", sql);
         return sql.toString();
+    }
+
+    /**
+     * Builds a half-open {@code [lower, upper)} predicate on the time column from
+     * epoch-millisecond bounds. Returns an empty string when either bound is null.
+     */
+    static String buildSplitTimePredicate(final String timeLowerMillis, final String timeUpperMillis)
+    {
+        if (timeLowerMillis == null || timeUpperMillis == null) {
+            return "";
+        }
+        final long low = Long.parseLong(timeLowerMillis);
+        final long high = Long.parseLong(timeUpperMillis);
+        final ArrowType timestampType = new ArrowType.Timestamp(TimeUnit.MILLISECOND, "UTC");
+        final String col = quote(InfluxDbConstants.DEFAULT_TIME_COLUMN);
+        return "(" + col + " >= " + toLiteral(low, timestampType)
+                + " AND " + col + " < " + toLiteral(high, timestampType) + ")";
     }
 
     /**

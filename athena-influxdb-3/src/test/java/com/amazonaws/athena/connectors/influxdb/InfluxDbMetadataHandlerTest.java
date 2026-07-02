@@ -206,6 +206,42 @@ public class InfluxDbMetadataHandlerTest
     }
 
     @Test
+    public void testClampedSplitCount()
+    {
+        // Within range is returned as-is.
+        assertEquals(4, handlerWithSplitCount("4").clampedSplitCount());
+        // Above the max is capped.
+        assertEquals(16, handlerWithSplitCount("100").clampedSplitCount());
+        // Zero and negative are floored to a single split.
+        assertEquals(1, handlerWithSplitCount("0").clampedSplitCount());
+        assertEquals(1, handlerWithSplitCount("-5").clampedSplitCount());
+        // Missing config falls back to the default.
+        assertEquals(8, handlerWithSplitCount(null).clampedSplitCount());
+        // Non-numeric config falls back to the default.
+        assertEquals(8, handlerWithSplitCount("abc").clampedSplitCount());
+    }
+
+    private InfluxDbMetadataHandler handlerWithSplitCount(final String count)
+    {
+        final Map<String, String> config = new HashMap<>();
+        config.put("spill_bucket", "test-bucket");
+        config.put("spill_prefix", "test-prefix");
+        config.put("INFLUXDB3_HOST_URL", "https://localhost:8086");
+        config.put("INFLUXDB3_AUTH_TOKEN", "test-token");
+        if (count != null) {
+            config.put("query_parallelism_count", count);
+        }
+        return new InfluxDbMetadataHandler(
+                mockFactory,
+                new com.amazonaws.athena.connector.lambda.security.LocalKeyFactory(),
+                mock(software.amazon.awssdk.services.secretsmanager.SecretsManagerClient.class),
+                mock(software.amazon.awssdk.services.athena.AthenaClient.class),
+                "test-bucket",
+                "test-prefix",
+                config);
+    }
+
+    @Test
     public void testToArrowType()
     {
         assertEquals(Types.MinorType.BIGINT, InfluxDbMetadataHandler.toArrowType("BIGINT"));

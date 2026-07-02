@@ -45,6 +45,8 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
+import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.PART_TIME_LOWER;
+import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.PART_TIME_UPPER;
 import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.SOURCE_TYPE;
 
 public class InfluxDbRecordHandler
@@ -98,7 +100,10 @@ public class InfluxDbRecordHandler
 
         final String resolvedDb = connectionFactory.resolveDatabase(schemaName);
 
-        final String sql = InfluxDbQueryBuilder.buildSql(schema, tableName, recordsRequest.getConstraints());
+        final String timeLower = recordsRequest.getSplit().getProperty(PART_TIME_LOWER);
+        final String timeUpper = recordsRequest.getSplit().getProperty(PART_TIME_UPPER);
+        final String sql = InfluxDbQueryBuilder.buildSql(schema, tableName, recordsRequest.getConstraints(),
+                timeLower, timeUpper);
         logger.info("readWithConstraint: schema={}, sql={}", schemaName, sql);
 
         final List<Field> fields = schema.getFields();
