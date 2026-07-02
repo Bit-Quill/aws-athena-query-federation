@@ -25,8 +25,14 @@ import com.amazonaws.athena.connector.lambda.data.BlockSpiller;
 import com.amazonaws.athena.connector.lambda.handlers.RecordHandler;
 import com.amazonaws.athena.connector.lambda.records.ReadRecordsRequest;
 import com.influxdb.v3.client.InfluxDBClient;
+import com.influxdb.v3.client.internal.VectorSchemaRootConverter;
 import org.apache.arrow.util.VisibleForTesting;
+import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.TimeStampVector;
+import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.types.TimeUnit;
 import org.apache.arrow.vector.types.Types;
+import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.slf4j.Logger;
@@ -36,13 +42,11 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
 
 import java.time.Instant;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.PART_TIME_LOWER;
@@ -55,9 +59,6 @@ public class InfluxDbRecordHandler
 {
     private static final Logger logger = LoggerFactory.getLogger(InfluxDbRecordHandler.class);
     private static final ZoneId UTC = ZoneId.of("UTC");
-
-    private static final long MAX_PLAUSIBLE_EPOCH_MILLIS =
-            LocalDate.of(2100, 1, 1).atStartOfDay(UTC).toInstant().toEpochMilli();
 
     private final InfluxDbConnectionFactory connectionFactory;
 
@@ -115,55 +116,63 @@ public class InfluxDbRecordHandler
         }
 
         try (InfluxDBClient client = connectionFactory.getClient(resolvedDb)) {
-            try (Stream<Object[]> stream = client.query(sql)) {
-                stream.forEach(row -> {
+            // queryBatches returns Arrow VectorSchemaRoots, so each timestamp column's
+            // precision is known from its Arrow type rather than guessed from magnitude.
+            try (Stream<VectorSchemaRoot> batches = client.queryBatches(sql)) {
+                batches.forEach(root -> {
                     if (!queryStatusChecker.isQueryRunning()) {
                         return;
                     }
-                    spiller.writeRows((final Block block, final int rowNum) -> {
-                        boolean matched = true;
-                        for (int i = 0; i < fields.size(); i++) {
-                            Object val = row[i];
-                            if (val != null && isTimestamp[i]) {
-                                // BlockUtils.setValue for TIMESTAMPMILLITZ requires a ZonedDateTime.
-                                val = toZonedDateTime(val);
+                    final List<FieldVector> vectors = root.getFieldVectors();
+                    final int rowCount = root.getRowCount();
+                    for (int r = 0; r < rowCount; r++) {
+                        final int rowIdx = r;
+                        // Reuse the client's converter for value extraction (handles
+                        // dictionary-encoded tags, Utf8, numerics, booleans).
+                        final Object[] values =
+                                VectorSchemaRootConverter.INSTANCE.getArrayObjectFromVectorSchemaRoot(root, rowIdx);
+                        spiller.writeRows((final Block block, final int rowNum) -> {
+                            boolean matched = true;
+                            for (int i = 0; i < fields.size(); i++) {
+                                Object val = values[i];
+                                if (val != null && isTimestamp[i]) {
+                                    // BlockUtils.setValue for TIMESTAMPMILLITZ expects a ZonedDateTime.
+                                    // Convert using the column's actual Arrow time unit.
+                                    final FieldVector vector = vectors.get(i);
+                                    if (vector.getField().getType() instanceof ArrowType.Timestamp) {
+                                        final TimeUnit unit =
+                                                ((ArrowType.Timestamp) vector.getField().getType()).getUnit();
+                                        val = toZonedDateTime(((TimeStampVector) vector).get(rowIdx), unit);
+                                    }
+                                }
+                                matched &= block.offerValue(fields.get(i).getName(), rowNum, val);
                             }
-                            matched &= block.offerValue(fields.get(i).getName(), rowNum, val);
-                        }
-                        return matched ? 1 : 0;
-                    });
+                            return matched ? 1 : 0;
+                        });
+                    }
                 });
             }
         }
     }
 
     /**
-     * Converts a timestamp value from InfluxDB into a ZonedDateTime. BlockUtils.setValue for TIMESTAMPMILLITZ expects ZonedDateTime.
+     * Converts an epoch timestamp to a UTC {@link ZonedDateTime} using the column's
+     * Arrow {@link TimeUnit}, so the granularity is known rather than inferred from
+     * the value's magnitude. BlockUtils.setValue for TIMESTAMPMILLITZ expects a ZonedDateTime.
      */
-    static ZonedDateTime toZonedDateTime(final Object value)
+    static ZonedDateTime toZonedDateTime(final long epoch, final TimeUnit unit)
     {
-        if (value instanceof ZonedDateTime) {
-            return (ZonedDateTime) value;
+        switch (unit) {
+            case SECOND :
+                return Instant.ofEpochSecond(epoch).atZone(UTC);
+            case MILLISECOND :
+                return Instant.ofEpochMilli(epoch).atZone(UTC);
+            case MICROSECOND :
+                return Instant.EPOCH.plus(epoch, ChronoUnit.MICROS).atZone(UTC);
+            case NANOSECOND :
+                return Instant.ofEpochSecond(0L, epoch).atZone(UTC);
+            default :
+                throw new IllegalArgumentException("Unsupported timestamp unit: " + unit);
         }
-        if (value instanceof Instant) {
-            return ((Instant) value).atZone(UTC);
-        }
-        if (value instanceof LocalDateTime) {
-            return ((LocalDateTime) value).atZone(UTC);
-        }
-        if (value instanceof Number) {
-            long val = ((Number) value).longValue();
-            if (val > MAX_PLAUSIBLE_EPOCH_MILLIS) {
-                // Too large to be milliseconds, so it must be nanoseconds.
-                val = TimeUnit.NANOSECONDS.toMillis(val);
-            }
-            return Instant.ofEpochMilli(val).atZone(UTC);
-        }
-        return Instant.parse(String.valueOf(value)).atZone(UTC);
-    }
-
-    static long toEpochMillis(final Object value)
-    {
-        return toZonedDateTime(value).toInstant().toEpochMilli();
     }
 }
