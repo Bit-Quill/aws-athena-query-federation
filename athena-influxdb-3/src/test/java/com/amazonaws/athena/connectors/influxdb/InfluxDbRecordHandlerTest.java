@@ -19,10 +19,10 @@
  */
 package com.amazonaws.athena.connectors.influxdb;
 
+import org.apache.arrow.vector.types.TimeUnit;
 import org.junit.Test;
 
 import java.time.Instant;
-import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 
@@ -30,40 +30,36 @@ import static org.junit.Assert.assertEquals;
 
 public class InfluxDbRecordHandlerTest
 {
+    private static final ZoneId UTC = ZoneId.of("UTC");
+
     @Test
-    public void testToZonedDateTimeWithZonedDateTime()
+    public void testToZonedDateTimeNanoseconds()
     {
-        final ZonedDateTime zonedDateTime = ZonedDateTime.now();
-        assertEquals(InfluxDbRecordHandler.toZonedDateTime(zonedDateTime), zonedDateTime);
+        final long nanos = 1782258710000000000L;
+        assertEquals(Instant.ofEpochSecond(0L, nanos).atZone(UTC),
+                InfluxDbRecordHandler.toZonedDateTime(nanos, TimeUnit.NANOSECOND));
     }
 
     @Test
-    public void testToZonedDateTimeWithInstant()
+    public void testToZonedDateTimeMilliseconds()
     {
-        final Instant instant = Instant.now();
-        assertEquals(InfluxDbRecordHandler.toZonedDateTime(instant), instant.atZone(ZoneId.of("UTC")));
+        final long millis = 1782258710000L;
+        assertEquals(Instant.ofEpochMilli(millis).atZone(UTC),
+                InfluxDbRecordHandler.toZonedDateTime(millis, TimeUnit.MILLISECOND));
     }
 
+    /**
+     * The same instant expressed in each supported unit must decode identically —
+     * this is exactly the ambiguity the magnitude heuristic could not guarantee.
+     */
     @Test
-    public void testToZonedDateTimeWithLocalDateTime()
+    public void testAllUnitsResolveToSameInstant()
     {
-        final LocalDateTime localDateTime = LocalDateTime.now();
-        assertEquals(InfluxDbRecordHandler.toZonedDateTime(localDateTime), localDateTime.atZone(ZoneId.of("UTC")));
-    }
-
-    @Test
-    public void testToZonedDateTimeWithNanoseconds()
-    {
-        final Long nanoseconds = 1782258710000000000L;
-        assertEquals(Instant.ofEpochMilli(nanoseconds / 1_000_000L).atZone(ZoneId.of("UTC")),
-                InfluxDbRecordHandler.toZonedDateTime(nanoseconds));
-    }
-
-    @Test
-    public void testToZonedDateTimeWithMilliSeconds()
-    {
-        final Long milliseconds = 1782258710000L;
-        assertEquals(Instant.ofEpochMilli(milliseconds).atZone(ZoneId.of("UTC")),
-                InfluxDbRecordHandler.toZonedDateTime(milliseconds));
+        final long seconds = 1782258710L;
+        final ZonedDateTime expected = Instant.ofEpochSecond(seconds).atZone(UTC);
+        assertEquals(expected, InfluxDbRecordHandler.toZonedDateTime(seconds, TimeUnit.SECOND));
+        assertEquals(expected, InfluxDbRecordHandler.toZonedDateTime(seconds * 1_000L, TimeUnit.MILLISECOND));
+        assertEquals(expected, InfluxDbRecordHandler.toZonedDateTime(seconds * 1_000_000L, TimeUnit.MICROSECOND));
+        assertEquals(expected, InfluxDbRecordHandler.toZonedDateTime(seconds * 1_000_000_000L, TimeUnit.NANOSECOND));
     }
 }
