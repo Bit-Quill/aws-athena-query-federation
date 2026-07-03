@@ -39,6 +39,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 
 import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.DEFAULT_TOKEN_KEY;
@@ -60,6 +61,8 @@ public class InfluxDbConnectionFactory
     private static final Gson GSON = new Gson();
     private static final HttpClient HTTP = HttpClient.newHttpClient();
 
+    private String resolvedToken;
+    private final Map<String, InfluxDBClient> influxDbClients;
     private final Map<String, String> configOptions;
     private FederationRequestHandler handler;
 
@@ -67,6 +70,8 @@ public class InfluxDbConnectionFactory
     {
         this.configOptions = configOptions;
         this.handler = handler;
+        this.influxDbClients = new ConcurrentHashMap<>();
+        this.resolvedToken = null;
     }
 
     /**
@@ -97,7 +102,7 @@ public class InfluxDbConnectionFactory
             db = configOptions.getOrDefault("influxdb_database", "");
         }
 
-        return InfluxDBClient.getInstance(host, token.toCharArray(), db);
+        return influxDbClients.computeIfAbsent(db, key -> InfluxDBClient.getInstance(host, token.toCharArray(), key));
     }
 
     /**
@@ -121,14 +126,13 @@ public class InfluxDbConnectionFactory
      */
     public String resolveTableName(final String resolvedDb, final TableName tableName) throws Exception
     {
-        try (InfluxDBClient client = getClient(resolvedDb)) {
-            final Map<String, Object> parameters = Map.of("table_name", tableName.getTableName().toLowerCase(Locale.ROOT));
-            final String sql = "SELECT table_name FROM information_schema.tables WHERE table_schema = 'iox' AND lower(table_name) = $table_name";
-            try (Stream<Object[]> stream = client.query(sql, parameters)) {
-                return stream.map(row -> String.valueOf(row[0]))
-                        .findFirst()
-                        .orElse(tableName.getTableName());
-            }
+        InfluxDBClient client = getClient(resolvedDb);
+        final Map<String, Object> parameters = Map.of("table_name", tableName.getTableName().toLowerCase(Locale.ROOT));
+        final String sql = "SELECT table_name FROM information_schema.tables WHERE table_schema = 'iox' AND lower(table_name) = $table_name";
+        try (Stream<Object[]> stream = client.query(sql, parameters)) {
+            return stream.map(row -> String.valueOf(row[0]))
+                    .findFirst()
+                    .orElse(tableName.getTableName());
         }
     }
 
@@ -162,6 +166,9 @@ public class InfluxDbConnectionFactory
      */
     String resolveToken()
     {
+        if (resolvedToken != null) {
+            return resolvedToken;
+        }
         final String rawToken = configOptions.get(ENV_INFLUXDB_TOKEN);
         if (rawToken == null || rawToken.isEmpty()) {
             throw new IllegalArgumentException("Missing required env var: " + ENV_INFLUXDB_TOKEN);
@@ -172,21 +179,23 @@ public class InfluxDbConnectionFactory
 
         // If the resolved value looks like JSON, extract the token key
         final String trimmed = resolved.trim();
-        if (trimmed.startsWith("{")) {
+        resolvedToken = trimmed;
+        if (resolvedToken.startsWith("{")) {
             try {
                 final JsonObject json = GSON.fromJson(trimmed, JsonObject.class);
                 final String tokenKey = configOptions.getOrDefault(ENV_INFLUXDB_TOKEN_KEY, DEFAULT_TOKEN_KEY);
                 if (json.has(tokenKey)) {
-                    return json.get(tokenKey).getAsString();
+                    resolvedToken = json.get(tokenKey).getAsString();
                 }
-                logger.warn("JSON secret does not contain key '{}', using raw value", tokenKey);
+                else {
+                    logger.warn("JSON secret does not contain key '{}', using raw value", tokenKey);
+                }
             }
             catch (final Exception e) {
                 logger.warn("Failed to parse secret as JSON, using raw value");
             }
         }
-
-        return resolved;
+        return resolvedToken;
     }
 
     public static final class DatabaseInfo

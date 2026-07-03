@@ -115,43 +115,42 @@ public class InfluxDbRecordHandler
             isTimestamp[i] = (mt == Types.MinorType.TIMESTAMPMILLITZ || mt == Types.MinorType.DATEMILLI);
         }
 
-        try (InfluxDBClient client = connectionFactory.getClient(resolvedDb)) {
-            // queryBatches returns Arrow VectorSchemaRoots, so each timestamp column's
-            // precision is known from its Arrow type rather than guessed from magnitude.
-            try (Stream<VectorSchemaRoot> batches = client.queryBatches(sql)) {
-                batches.forEach(root -> {
-                    if (!queryStatusChecker.isQueryRunning()) {
-                        return;
-                    }
-                    final List<FieldVector> vectors = root.getFieldVectors();
-                    final int rowCount = root.getRowCount();
-                    for (int r = 0; r < rowCount; r++) {
-                        final int rowIdx = r;
-                        // Reuse the client's converter for value extraction (handles
-                        // dictionary-encoded tags, Utf8, numerics, booleans).
-                        final Object[] values =
-                                VectorSchemaRootConverter.INSTANCE.getArrayObjectFromVectorSchemaRoot(root, rowIdx);
-                        spiller.writeRows((final Block block, final int rowNum) -> {
-                            boolean matched = true;
-                            for (int i = 0; i < fields.size(); i++) {
-                                Object val = values[i];
-                                if (val != null && isTimestamp[i]) {
-                                    // BlockUtils.setValue for TIMESTAMPMILLITZ expects a ZonedDateTime.
-                                    // Convert using the column's actual Arrow time unit.
-                                    final FieldVector vector = vectors.get(i);
-                                    if (vector.getField().getType() instanceof ArrowType.Timestamp) {
-                                        final TimeUnit unit =
-                                                ((ArrowType.Timestamp) vector.getField().getType()).getUnit();
-                                        val = toZonedDateTime(((TimeStampVector) vector).get(rowIdx), unit);
-                                    }
+        InfluxDBClient client = connectionFactory.getClient(resolvedDb);
+        // queryBatches returns Arrow VectorSchemaRoots, so each timestamp column's
+        // precision is known from its Arrow type rather than guessed from magnitude.
+        try (Stream<VectorSchemaRoot> batches = client.queryBatches(sql)) {
+            batches.forEach(root -> {
+                if (!queryStatusChecker.isQueryRunning()) {
+                    return;
+                }
+                final List<FieldVector> vectors = root.getFieldVectors();
+                final int rowCount = root.getRowCount();
+                for (int r = 0; r < rowCount; r++) {
+                    final int rowIdx = r;
+                    // Reuse the client's converter for value extraction (handles
+                    // dictionary-encoded tags, Utf8, numerics, booleans).
+                    final Object[] values =
+                            VectorSchemaRootConverter.INSTANCE.getArrayObjectFromVectorSchemaRoot(root, rowIdx);
+                    spiller.writeRows((final Block block, final int rowNum) -> {
+                        boolean matched = true;
+                        for (int i = 0; i < fields.size(); i++) {
+                            Object val = values[i];
+                            if (val != null && isTimestamp[i]) {
+                                // BlockUtils.setValue for TIMESTAMPMILLITZ expects a ZonedDateTime.
+                                // Convert using the column's actual Arrow time unit.
+                                final FieldVector vector = vectors.get(i);
+                                if (vector.getField().getType() instanceof ArrowType.Timestamp) {
+                                    final TimeUnit unit =
+                                            ((ArrowType.Timestamp) vector.getField().getType()).getUnit();
+                                    val = toZonedDateTime(((TimeStampVector) vector).get(rowIdx), unit);
                                 }
-                                matched &= block.offerValue(fields.get(i).getName(), rowNum, val);
                             }
-                            return matched ? 1 : 0;
-                        });
-                    }
-                });
-            }
+                            matched &= block.offerValue(fields.get(i).getName(), rowNum, val);
+                        }
+                        return matched ? 1 : 0;
+                    });
+                }
+            });
         }
     }
 

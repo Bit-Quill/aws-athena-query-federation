@@ -164,17 +164,15 @@ public class InfluxDbMetadataHandler
     {
         logger.info("doListTables: catalog={}, schema={}", request.getCatalogName(), request.getSchemaName());
         final List<TableName> tables = new ArrayList<>();
-        try (InfluxDBClient client = connectionFactory
-                .getClient(connectionFactory.resolveDatabase(request.getSchemaName()))) {
-            final String sql = "SELECT table_name FROM information_schema.tables WHERE table_schema = 'iox'";
-            try (Stream<Object[]> stream = client.query(sql)) {
-                stream.forEach(row -> {
-                    final String originalName = String.valueOf(row[0]);
-                    // Athena requires lowercase identifiers, but we store the original
-                    // case in table properties so we can resolve it later.
-                    tables.add(new TableName(request.getSchemaName(), originalName.toLowerCase(Locale.ROOT)));
-                });
-            }
+        InfluxDBClient client = connectionFactory.getClient(connectionFactory.resolveDatabase(request.getSchemaName()));
+        final String sql = "SELECT table_name FROM information_schema.tables WHERE table_schema = 'iox'";
+        try (Stream<Object[]> stream = client.query(sql)) {
+            stream.forEach(row -> {
+                final String originalName = String.valueOf(row[0]);
+                // Athena requires lowercase identifiers, but we store the original
+                // case in table properties so we can resolve it later.
+                tables.add(new TableName(request.getSchemaName(), originalName.toLowerCase(Locale.ROOT)));
+            });
         }
         return new ListTablesResponse(request.getCatalogName(), tables, null);
     }
@@ -190,25 +188,23 @@ public class InfluxDbMetadataHandler
 
         // Store the original case-sensitive table name so the RecordHandler can use it
         schemaBuilder.addMetadata("originalTableName", resolvedTable);
-        try (InfluxDBClient client = connectionFactory
-                .getClient(resolvedDb)) {
-            final Map<String, Object> parameters = Map.of("table_name", request.getTableName().getTableName().toLowerCase(Locale.ROOT));
-            final String sql = "SELECT column_name, data_type FROM information_schema.columns WHERE lower(table_name) = $table_name";
-            try (Stream<Object[]> stream = client.query(sql, parameters)) {
-                stream.forEach(row -> {
-                    final String colName = String.valueOf(row[0]).toLowerCase(Locale.ROOT);
-                    final String dataType = String.valueOf(row[1]).toUpperCase(Locale.ROOT);
-                    final Types.MinorType minorType = toArrowType(dataType);
-                    if (minorType == Types.MinorType.TIMESTAMPMILLITZ) {
-                        schemaBuilder.addField(colName,
-                                new org.apache.arrow.vector.types.pojo.ArrowType.Timestamp(
-                                        org.apache.arrow.vector.types.TimeUnit.MILLISECOND, "UTC"));
-                    }
-                    else {
-                        schemaBuilder.addField(colName, minorType.getType());
-                    }
-                });
-            }
+        InfluxDBClient client = connectionFactory.getClient(resolvedDb);
+        final Map<String, Object> parameters = Map.of("table_name", request.getTableName().getTableName().toLowerCase(Locale.ROOT));
+        final String sql = "SELECT column_name, data_type FROM information_schema.columns WHERE lower(table_name) = $table_name";
+        try (Stream<Object[]> stream = client.query(sql, parameters)) {
+            stream.forEach(row -> {
+                final String colName = String.valueOf(row[0]).toLowerCase(Locale.ROOT);
+                final String dataType = String.valueOf(row[1]).toUpperCase(Locale.ROOT);
+                final Types.MinorType minorType = toArrowType(dataType);
+                if (minorType == Types.MinorType.TIMESTAMPMILLITZ) {
+                    schemaBuilder.addField(colName,
+                            new org.apache.arrow.vector.types.pojo.ArrowType.Timestamp(
+                                    org.apache.arrow.vector.types.TimeUnit.MILLISECOND, "UTC"));
+                }
+                else {
+                    schemaBuilder.addField(colName, minorType.getType());
+                }
+            });
         }
         final Schema schema = schemaBuilder.build();
         return new GetTableResponse(request.getCatalogName(), request.getTableName(), schema);
