@@ -269,7 +269,7 @@ public class InfluxDbMetadataHandler
     public void getPartitions(final BlockWriter blockWriter, final GetTableLayoutRequest request, final QueryStatusChecker queryStatusChecker) throws Exception
     {
         final Long[] bounds = extractTimeRange(request.getConstraints());
-        if (!parallelismEnabled() || bounds == null) {
+        if (bounds == null) {
             // Single-partition fallback: one bucket with no time bound. The
             // RowWriter is invoked once, so it must write every row it needs.
             blockWriter.writeRows((block, rowNum) -> {
