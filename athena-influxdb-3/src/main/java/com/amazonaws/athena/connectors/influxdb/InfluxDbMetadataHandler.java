@@ -188,6 +188,7 @@ public class InfluxDbMetadataHandler
 
         // Store the original case-sensitive table name so the RecordHandler can use it
         schemaBuilder.addMetadata("originalTableName", resolvedTable);
+        schemaBuilder.addMetadata("resolvedDatabaseName", resolvedDb);
         InfluxDBClient client = connectionFactory.getClient(resolvedDb);
         final Map<String, Object> parameters = Map.of("table_name", request.getTableName().getTableName().toLowerCase(Locale.ROOT));
         final String sql = "SELECT column_name, data_type FROM information_schema.columns WHERE lower(table_name) = $table_name";

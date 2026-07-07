@@ -99,7 +99,7 @@ public class InfluxDbRecordHandler
             tableName = originalTableName;
         }
 
-        final String resolvedDb = connectionFactory.resolveDatabase(schemaName);
+        final String resolvedDb = schema.getCustomMetadata().get("resolvedDatabaseName");
 
         final String timeLower = recordsRequest.getSplit().getProperty(PART_TIME_LOWER);
         final String timeUpper = recordsRequest.getSplit().getProperty(PART_TIME_UPPER);
