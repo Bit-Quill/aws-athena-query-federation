@@ -24,7 +24,6 @@ import com.amazonaws.athena.connector.lambda.data.Block;
 import com.amazonaws.athena.connector.lambda.data.BlockSpiller;
 import com.amazonaws.athena.connector.lambda.handlers.RecordHandler;
 import com.amazonaws.athena.connector.lambda.records.ReadRecordsRequest;
-import com.influxdb.v3.client.InfluxDBClient;
 import com.influxdb.v3.client.internal.VectorSchemaRootConverter;
 import org.apache.arrow.util.VisibleForTesting;
 import org.apache.arrow.vector.FieldVector;
@@ -115,10 +114,10 @@ public class InfluxDbRecordHandler
             isTimestamp[i] = (mt == Types.MinorType.TIMESTAMPMILLITZ || mt == Types.MinorType.DATEMILLI);
         }
 
-        InfluxDBClient client = connectionFactory.getClient(resolvedDb);
-        // queryBatches returns Arrow VectorSchemaRoots, so each timestamp column's
-        // precision is known from its Arrow type rather than guessed from magnitude.
-        try (Stream<VectorSchemaRoot> batches = client.queryBatches(sql)) {
+        connectionFactory.executeWithTokenRetry(resolvedDb, client -> {
+            // queryBatches returns Arrow VectorSchemaRoots, so each timestamp column's
+            // precision is known from its Arrow type rather than guessed from magnitude.
+            try (Stream<VectorSchemaRoot> batches = client.queryBatches(sql)) {
             batches.forEach(root -> {
                 if (!queryStatusChecker.isQueryRunning()) {
                     return;
@@ -151,7 +150,9 @@ public class InfluxDbRecordHandler
                     });
                 }
             });
-        }
+            }
+            return null;
+        });
     }
 
     /**

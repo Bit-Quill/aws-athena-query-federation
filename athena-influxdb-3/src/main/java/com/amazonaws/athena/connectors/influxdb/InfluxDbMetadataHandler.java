@@ -52,7 +52,6 @@ import com.amazonaws.athena.connector.lambda.metadata.optimizations.pushdown.Top
 import com.amazonaws.athena.connector.lambda.security.EncryptionKeyFactory;
 import com.amazonaws.athena.connectors.influxdb.InfluxDbConnectionFactory.DatabaseInfo;
 import com.google.common.collect.ImmutableMap;
-import com.influxdb.v3.client.InfluxDBClient;
 import org.apache.arrow.util.VisibleForTesting;
 import org.apache.arrow.vector.complex.reader.FieldReader;
 import org.apache.arrow.vector.types.Types;
@@ -164,16 +163,22 @@ public class InfluxDbMetadataHandler
     {
         logger.info("doListTables: catalog={}, schema={}", request.getCatalogName(), request.getSchemaName());
         final List<TableName> tables = new ArrayList<>();
-        InfluxDBClient client = connectionFactory.getClient(connectionFactory.resolveDatabase(request.getSchemaName()));
+        final String resolvedDb = connectionFactory.resolveDatabase(request.getSchemaName());
         final String sql = "SELECT table_name FROM information_schema.tables WHERE table_schema = 'iox'";
-        try (Stream<Object[]> stream = client.query(sql)) {
-            stream.forEach(row -> {
-                final String originalName = String.valueOf(row[0]);
-                // Athena requires lowercase identifiers, but we store the original
-                // case in table properties so we can resolve it later.
-                tables.add(new TableName(request.getSchemaName(), originalName.toLowerCase(Locale.ROOT)));
-            });
-        }
+        connectionFactory.executeWithTokenRetry(resolvedDb, client -> {
+            // Clear in case the query is retried after a token refresh (auth errors precede any
+            // rows, so this is normally a no-op, but it keeps a retry from duplicating entries).
+            tables.clear();
+            try (Stream<Object[]> stream = client.query(sql)) {
+                stream.forEach(row -> {
+                    final String originalName = String.valueOf(row[0]);
+                    // Athena requires lowercase identifiers, but we store the original
+                    // case in table properties so we can resolve it later.
+                    tables.add(new TableName(request.getSchemaName(), originalName.toLowerCase(Locale.ROOT)));
+                });
+            }
+            return null;
+        });
         return new ListTablesResponse(request.getCatalogName(), tables, null);
     }
 
@@ -189,23 +194,25 @@ public class InfluxDbMetadataHandler
         // Store the original case-sensitive table name so the RecordHandler can use it
         schemaBuilder.addMetadata("originalTableName", resolvedTable);
         schemaBuilder.addMetadata("resolvedDatabaseName", resolvedDb);
-        InfluxDBClient client = connectionFactory.getClient(resolvedDb);
         final Map<String, Object> parameters = Map.of("table_name", request.getTableName().getTableName().toLowerCase(Locale.ROOT));
         final String sql = "SELECT column_name, data_type FROM information_schema.columns WHERE lower(table_name) = $table_name";
-        try (Stream<Object[]> stream = client.query(sql, parameters)) {
-            stream.forEach(row -> {
-                final String colName = String.valueOf(row[0]).toLowerCase(Locale.ROOT);
-                final String dataType = String.valueOf(row[1]).toUpperCase(Locale.ROOT);
-                final Types.MinorType minorType = toArrowType(dataType);
-                if (minorType == Types.MinorType.TIMESTAMPMILLITZ) {
-                    schemaBuilder.addField(colName,
-                            new org.apache.arrow.vector.types.pojo.ArrowType.Timestamp(
-                                    org.apache.arrow.vector.types.TimeUnit.MILLISECOND, "UTC"));
-                }
-                else {
-                    schemaBuilder.addField(colName, minorType.getType());
-                }
-            });
+        final List<Object[]> columns = connectionFactory.executeWithTokenRetry(resolvedDb, client -> {
+            try (Stream<Object[]> stream = client.query(sql, parameters)) {
+                return stream.collect(java.util.stream.Collectors.toList());
+            }
+        });
+        for (final Object[] row : columns) {
+            final String colName = String.valueOf(row[0]).toLowerCase(Locale.ROOT);
+            final String dataType = String.valueOf(row[1]).toUpperCase(Locale.ROOT);
+            final Types.MinorType minorType = toArrowType(dataType);
+            if (minorType == Types.MinorType.TIMESTAMPMILLITZ) {
+                schemaBuilder.addField(colName,
+                        new org.apache.arrow.vector.types.pojo.ArrowType.Timestamp(
+                                org.apache.arrow.vector.types.TimeUnit.MILLISECOND, "UTC"));
+            }
+            else {
+                schemaBuilder.addField(colName, minorType.getType());
+            }
         }
         final Schema schema = schemaBuilder.build();
         return new GetTableResponse(request.getCatalogName(), request.getTableName(), schema);

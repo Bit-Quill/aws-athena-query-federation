@@ -63,13 +63,19 @@ public class InfluxDbMetadataHandlerTest
     private InfluxDbMetadataHandler handler;
 
     @Before
-    public void setUp()
+    public void setUp() throws Exception
     {
         allocator = new BlockAllocatorImpl();
         mockFactory = mock(InfluxDbConnectionFactory.class);
         mockClient = mock(InfluxDBClient.class);
         when(mockFactory.getClient(anyString())).thenReturn(mockClient);
         when(mockFactory.getClient(isNull())).thenReturn(mockClient);
+        // The real executeWithTokenRetry runs the query against a client from getClient. For these
+        // tests, run the caller's lambda directly against the mock client so the query stubs apply.
+        when(mockFactory.executeWithTokenRetry(any(), any())).thenAnswer(invocation -> {
+            final InfluxDbConnectionFactory.InfluxDbQuery<?> query = invocation.getArgument(1);
+            return query.run(mockClient);
+        });
 
         final Map<String, String> config = new HashMap<>();
         config.put("spill_bucket", "test-bucket");
