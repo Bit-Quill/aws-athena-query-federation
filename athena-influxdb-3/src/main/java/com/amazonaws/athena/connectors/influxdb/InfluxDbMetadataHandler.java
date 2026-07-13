@@ -50,6 +50,7 @@ import com.amazonaws.athena.connector.lambda.metadata.optimizations.pushdown.Fil
 import com.amazonaws.athena.connector.lambda.metadata.optimizations.pushdown.LimitPushdownSubType;
 import com.amazonaws.athena.connector.lambda.metadata.optimizations.pushdown.TopNPushdownSubType;
 import com.amazonaws.athena.connector.lambda.security.EncryptionKeyFactory;
+import com.amazonaws.athena.connector.util.PaginationHelper;
 import com.amazonaws.athena.connectors.influxdb.InfluxDbConnectionFactory.DatabaseInfo;
 import com.google.common.collect.ImmutableMap;
 import org.apache.arrow.util.VisibleForTesting;
@@ -179,7 +180,10 @@ public class InfluxDbMetadataHandler
             }
             return null;
         });
-        return new ListTablesResponse(request.getCatalogName(), tables, null);
+        // Manual (in-memory) pagination: InfluxDB returns the full table list in one query, and Athena
+        // may page a large catalog in via repeated calls using the returned continuation token.
+        return PaginationHelper.manualPagination(tables, request.getNextToken(), request.getPageSize(),
+                request.getCatalogName());
     }
 
     @Override

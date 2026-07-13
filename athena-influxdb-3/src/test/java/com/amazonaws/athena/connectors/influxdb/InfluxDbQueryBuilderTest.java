@@ -19,18 +19,28 @@
  */
 package com.amazonaws.athena.connectors.influxdb;
 
+import com.amazonaws.athena.connector.lambda.data.Block;
 import com.amazonaws.athena.connector.lambda.data.BlockAllocator;
 import com.amazonaws.athena.connector.lambda.data.BlockAllocatorImpl;
 import com.amazonaws.athena.connector.lambda.data.SchemaBuilder;
+import com.amazonaws.athena.connector.lambda.domain.predicate.ConstraintEvaluator;
 import com.amazonaws.athena.connector.lambda.domain.predicate.Constraints;
 import com.amazonaws.athena.connector.lambda.domain.predicate.OrderByField;
 import com.amazonaws.athena.connector.lambda.domain.predicate.Range;
 import com.amazonaws.athena.connector.lambda.domain.predicate.SortedRangeSet;
 import com.amazonaws.athena.connector.lambda.domain.predicate.ValueSet;
+import com.amazonaws.athena.connector.lambda.domain.predicate.expression.ConstantExpression;
+import com.amazonaws.athena.connector.lambda.domain.predicate.expression.FederationExpression;
+import com.amazonaws.athena.connector.lambda.domain.predicate.expression.FunctionCallExpression;
+import com.amazonaws.athena.connector.lambda.domain.predicate.expression.VariableExpression;
+import com.amazonaws.athena.connector.lambda.domain.predicate.functions.StandardFunctions;
 import com.amazonaws.athena.connector.lambda.metadata.GetDataSourceCapabilitiesRequest;
 import com.amazonaws.athena.connector.lambda.metadata.GetDataSourceCapabilitiesResponse;
 import com.amazonaws.athena.connector.lambda.metadata.optimizations.OptimizationSubType;
 import com.amazonaws.athena.connector.lambda.security.FederatedIdentity;
+
+import org.apache.arrow.vector.types.FloatingPointPrecision;
+import org.apache.arrow.vector.types.TimeUnit;
 import org.apache.arrow.vector.types.Types;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Schema;
@@ -321,5 +331,79 @@ public class InfluxDbQueryBuilderTest
         assertTrue(capabilities.containsKey("supports_limit_pushdown"));
         assertTrue(capabilities.containsKey("supports_top_n_pushdown"));
         assertTrue(capabilities.containsKey("supports_complex_expression_pushdown"));
+    }
+
+    private static final ArrowType UTF8 = new ArrowType.Utf8();
+    private static final ArrowType FLOAT8 = new ArrowType.FloatingPoint(FloatingPointPrecision.DOUBLE);
+    private static final ArrowType BOOL = new ArrowType.Bool();
+
+    private ConstantExpression constant(final Object value, final ArrowType type)
+    {
+        final Block block = allocator.createBlock(new SchemaBuilder().addField("col1", type).build());
+        block.constrain(ConstraintEvaluator.emptyEvaluator());
+        block.setValue("col1", 0, value);
+        block.setRowCount(1);
+        return new ConstantExpression(block, type);
+    }
+
+    private FunctionCallExpression fce(final StandardFunctions func,
+            final ArrowType returnType,
+            final FederationExpression... args)
+    {
+        return new com.amazonaws.athena.connector.lambda.domain.predicate.expression.FunctionCallExpression(
+                returnType, func.getFunctionName(), Arrays.asList(args));
+    }
+
+    private VariableExpression var(final String col, final ArrowType type)
+    {
+        return new VariableExpression(col, type);
+    }
+
+    private StandardFunctions sf(final String name)
+    {
+        return StandardFunctions.valueOf(name);
+    }
+
+    private String sqlForExpression(final FederationExpression expr)
+    {
+        final Constraints constraints = new Constraints(new HashMap<>(), Arrays.asList(expr),
+                Collections.emptyList(), Constraints.DEFAULT_NO_LIMIT, null, null);
+        return InfluxDbQueryBuilder.buildSql(schema, "cpu", constraints);
+    }
+
+    @Test
+    public void testExpressionPushdownBooleanAndComparisons()
+    {
+        final String sql = sqlForExpression(fce(sf("AND_FUNCTION_NAME"), BOOL,
+                fce(sf("EQUAL_OPERATOR_FUNCTION_NAME"), BOOL, var("host", UTF8), constant("srv", UTF8)),
+                fce(sf("GREATER_THAN_OPERATOR_FUNCTION_NAME"), BOOL, var("usage_idle", FLOAT8),
+                        constant(50.0, FLOAT8))));
+        assertTrue(sql.contains("\"host\" = 'srv'"));
+        assertTrue(sql.contains("\"usage_idle\" > 50.0"));
+        assertTrue(sql.contains(" AND "));
+    }
+
+    @Test
+    public void testExpressionPushdownOperatorsCoverage()
+    {
+        assertTrue(sqlForExpression(fce(sf("LIKE_PATTERN_FUNCTION_NAME"), BOOL,
+                var("host", UTF8), constant("srv%", UTF8))).contains("LIKE"));
+
+        final String notNull = sqlForExpression(fce(sf("NOT_FUNCTION_NAME"), BOOL,
+                fce(sf("IS_NULL_FUNCTION_NAME"), BOOL, var("host", UTF8))));
+        assertTrue(notNull.contains("NOT") && notNull.contains("IS NULL"));
+
+        assertTrue(sqlForExpression(fce(sf("OR_FUNCTION_NAME"), BOOL,
+                fce(sf("LESS_THAN_OPERATOR_FUNCTION_NAME"), BOOL, var("usage_idle", FLOAT8), constant(10.0, FLOAT8)),
+                fce(sf("GREATER_THAN_OR_EQUAL_OPERATOR_FUNCTION_NAME"), BOOL, var("usage_idle", FLOAT8),
+                        constant(90.0, FLOAT8)))).contains(" OR "));
+
+        assertTrue(sqlForExpression(fce(sf("ADD_FUNCTION_NAME"), FLOAT8,
+                var("usage_idle", FLOAT8), constant(1.0, FLOAT8))).contains(" + "));
+
+        // Timestamp constant exercises constraintLiteral -> constraintEpochMillis -> timestampLiteral.
+        final ArrowType ts = new ArrowType.Timestamp(TimeUnit.MILLISECOND, "UTC");
+        assertTrue(sqlForExpression(fce(sf("GREATER_THAN_OPERATOR_FUNCTION_NAME"), BOOL,
+                var("time", ts), constant(1782258710000L, ts))).contains("TIMESTAMP"));
     }
 }

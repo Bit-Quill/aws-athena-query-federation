@@ -104,7 +104,7 @@ public class InfluxDbRecordHandler
         final String timeUpper = recordsRequest.getSplit().getProperty(PART_TIME_UPPER);
         final String sql = InfluxDbQueryBuilder.buildSql(schema, tableName, recordsRequest.getConstraints(),
                 timeLower, timeUpper);
-        logger.info("readWithConstraint: schema={}, sql={}", schemaName, sql);
+        logger.info("readWithConstraint: schema={}, table={}", schemaName, tableName);
 
         final List<Field> fields = schema.getFields();
         // Pre-compute which columns are timestamps

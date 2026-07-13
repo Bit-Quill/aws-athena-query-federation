@@ -20,6 +20,7 @@
 package com.amazonaws.athena.connectors.influxdb;
 
 import com.amazonaws.athena.connector.lambda.domain.TableName;
+import com.amazonaws.athena.connector.lambda.exceptions.FederationThrottleException;
 import com.amazonaws.athena.connector.lambda.handlers.FederationRequestHandler;
 import com.google.common.reflect.TypeToken;
 import com.google.gson.Gson;
@@ -164,9 +165,32 @@ public class InfluxDbConnectionFactory
                     invalidateToken();
                     continue;
                 }
+                if (isThrottle(e)) {
+                    throw new FederationThrottleException("InfluxDB throttled the request", e);
+                }
                 throw e;
             }
         }
+    }
+
+    /**
+     * True if the throwable (or anything in its cause chain) indicates the downstream is throttling us: a Flight
+     * {@code RESOURCE_EXHAUSTED} or an HTTP 429.
+     */
+    static boolean isThrottle(final Throwable throwable)
+    {
+        Throwable cause = throwable;
+        for (int depth = 0; cause != null && depth < 32; cause = cause.getCause(), depth++) {
+            if (cause instanceof FlightRuntimeException
+                    && ((FlightRuntimeException) cause).status().code() == FlightStatusCode.RESOURCE_EXHAUSTED) {
+                return true;
+            }
+            if (cause instanceof InfluxDBApiHttpException
+                    && ((InfluxDBApiHttpException) cause).statusCode() == 429) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -274,6 +298,10 @@ public class InfluxDbConnectionFactory
                         statusCode, refreshes, maxTokenRefreshRetries);
                 invalidateToken();
                 continue;
+            }
+            if (statusCode == 429) {
+                throw new FederationThrottleException(
+                        "InfluxDB throttled the request listing databases in host " + host);
             }
             throw new RuntimeException(
                     "Failed to list databases in host " + host + ": status code: " + statusCode);

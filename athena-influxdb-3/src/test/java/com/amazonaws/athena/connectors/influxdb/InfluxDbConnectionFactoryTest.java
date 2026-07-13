@@ -19,6 +19,7 @@
  */
 package com.amazonaws.athena.connectors.influxdb;
 
+import com.amazonaws.athena.connector.lambda.exceptions.FederationThrottleException;
 import com.amazonaws.athena.connector.lambda.handlers.FederationRequestHandler;
 import com.influxdb.v3.client.InfluxDBApiHttpException;
 import com.influxdb.v3.client.InfluxDBClient;
@@ -120,6 +121,62 @@ public class InfluxDbConnectionFactoryTest
     }
 
     @Test
+    public void testResolveTokenJsonMissingKeyFallsBackToRaw()
+    {
+        final Map<String, String> config = new HashMap<>();
+        config.put("INFLUXDB3_HOST_URL", "https://localhost:8086");
+        config.put("INFLUXDB3_AUTH_TOKEN", "${my-secret}");
+        when(mockHandler.resolveSecrets("${my-secret}")).thenReturn("{\"other\": \"value\"}");
+
+        final InfluxDbConnectionFactory factory = new InfluxDbConnectionFactory(config, mockHandler);
+        // No 'token' key: the raw JSON will be used as the token.
+        assertEquals("{\"other\": \"value\"}", factory.resolveToken());
+    }
+
+    @Test
+    public void testResolveTokenInvalidJsonFallsBackToRaw()
+    {
+        final Map<String, String> config = new HashMap<>();
+        config.put("INFLUXDB3_HOST_URL", "https://localhost:8086");
+        config.put("INFLUXDB3_AUTH_TOKEN", "${my-secret}");
+        when(mockHandler.resolveSecrets("${my-secret}")).thenReturn("{not-valid-json");
+
+        final InfluxDbConnectionFactory factory = new InfluxDbConnectionFactory(config, mockHandler);
+        assertEquals("{not-valid-json", factory.resolveToken());
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void testGetClientMissingHostThrows()
+    {
+        final Map<String, String> config = new HashMap<>();
+        config.put("INFLUXDB3_AUTH_TOKEN", "my-plain-token");
+        final InfluxDbConnectionFactory factory = new InfluxDbConnectionFactory(config, mockHandler);
+        factory.getClient("db");
+    }
+
+    @Test
+    public void testInvalidMaxRetriesConfigFallsBackToDefault() throws Exception
+    {
+        final Map<String, String> config = baseConfig();
+        config.put("token_refresh_max_retries", "not-a-number");
+        // Falls back to the default (1) rather than throwing; a single auth error is retried once.
+        final InfluxDbConnectionFactory factory = spyFactoryReturningClient(config);
+        final AtomicInteger calls = new AtomicInteger();
+        try {
+            factory.executeWithTokenRetry("db", client -> {
+                calls.incrementAndGet();
+                throw CallStatus.UNAUTHENTICATED.toRuntimeException();
+            });
+            fail("expected auth error to propagate after the default single retry");
+        }
+        catch (final Exception e) {
+            assertTrue(InfluxDbConnectionFactory.isAuthError(e));
+        }
+        // Invalid config falls back to the default retry count (not a NumberFormatException at construction).
+        assertEquals(1 + InfluxDbConstants.DEFAULT_TOKEN_REFRESH_MAX_RETRIES, calls.get());
+    }
+
+    @Test
     public void testResolveDatabaseRestoresOriginalCase() throws Exception
     {
         final Map<String, String> config = new HashMap<>();
@@ -158,6 +215,38 @@ public class InfluxDbConnectionFactoryTest
         assertFalse(InfluxDbConnectionFactory.isAuthError(new RuntimeException("boom")));
         assertFalse(InfluxDbConnectionFactory.isAuthError(CallStatus.INTERNAL.toRuntimeException()));
         assertFalse(InfluxDbConnectionFactory.isAuthError(new InfluxDBApiHttpException("server error", null, 500)));
+    }
+
+    @Test
+    public void testIsThrottleForFlightResourceExhaustedAndHttp429()
+    {
+        assertTrue(InfluxDbConnectionFactory.isThrottle(CallStatus.RESOURCE_EXHAUSTED.toRuntimeException()));
+        assertTrue(InfluxDbConnectionFactory.isThrottle(new InfluxDBApiHttpException("slow down", null, 429)));
+        assertTrue(InfluxDbConnectionFactory.isThrottle(
+                new RuntimeException("wrap", CallStatus.RESOURCE_EXHAUSTED.toRuntimeException())));
+    }
+
+    @Test
+    public void testIsThrottleFalseForOtherErrors()
+    {
+        assertFalse(InfluxDbConnectionFactory.isThrottle(new RuntimeException("boom")));
+        assertFalse(InfluxDbConnectionFactory.isThrottle(CallStatus.UNAUTHENTICATED.toRuntimeException()));
+        assertFalse(InfluxDbConnectionFactory.isThrottle(new InfluxDBApiHttpException("forbidden", null, 403)));
+    }
+
+    @Test
+    public void testExecuteWithTokenRetrySurfacesThrottleAsFederationThrottleException()
+    {
+        final InfluxDbConnectionFactory factory = spyFactoryReturningClient(baseConfig());
+        try {
+            factory.executeWithTokenRetry("db", client -> {
+                throw CallStatus.RESOURCE_EXHAUSTED.toRuntimeException();
+            });
+            fail("expected throttle to surface as FederationThrottleException");
+        }
+        catch (final Exception e) {
+            assertTrue(e instanceof FederationThrottleException);
+        }
     }
 
     private Map<String, String> baseConfig()

@@ -19,9 +19,18 @@
  */
 package com.amazonaws.athena.connectors.influxdb;
 
+import com.amazonaws.athena.connector.lambda.QueryStatusChecker;
+import com.amazonaws.athena.connector.lambda.data.Block;
 import com.amazonaws.athena.connector.lambda.data.BlockAllocator;
 import com.amazonaws.athena.connector.lambda.data.BlockAllocatorImpl;
+import com.amazonaws.athena.connector.lambda.data.BlockWriter;
+import com.amazonaws.athena.connector.lambda.data.SchemaBuilder;
 import com.amazonaws.athena.connector.lambda.domain.TableName;
+import com.amazonaws.athena.connector.lambda.domain.predicate.ConstraintEvaluator;
+import com.amazonaws.athena.connector.lambda.domain.predicate.Constraints;
+import com.amazonaws.athena.connector.lambda.metadata.GetSplitsRequest;
+import com.amazonaws.athena.connector.lambda.metadata.GetSplitsResponse;
+import com.amazonaws.athena.connector.lambda.metadata.GetTableLayoutRequest;
 import com.amazonaws.athena.connector.lambda.metadata.GetTableRequest;
 import com.amazonaws.athena.connector.lambda.metadata.GetTableResponse;
 import com.amazonaws.athena.connector.lambda.metadata.ListSchemasRequest;
@@ -29,21 +38,30 @@ import com.amazonaws.athena.connector.lambda.metadata.ListSchemasResponse;
 import com.amazonaws.athena.connector.lambda.metadata.ListTablesRequest;
 import com.amazonaws.athena.connector.lambda.metadata.ListTablesResponse;
 import com.amazonaws.athena.connector.lambda.security.FederatedIdentity;
+import com.amazonaws.athena.connector.lambda.security.LocalKeyFactory;
 import com.amazonaws.athena.connectors.influxdb.InfluxDbConnectionFactory.DatabaseInfo;
 import com.influxdb.v3.client.InfluxDBClient;
+
+import software.amazon.awssdk.services.athena.AthenaClient;
+import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
+
 import org.apache.arrow.vector.types.Types;
+import org.apache.arrow.vector.types.pojo.Schema;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.Mockito;
 
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
@@ -255,5 +273,124 @@ public class InfluxDbMetadataHandlerTest
         assertEquals(Types.MinorType.BIT, InfluxDbMetadataHandler.toArrowType("BOOLEAN"));
         assertEquals(Types.MinorType.TIMESTAMPMILLITZ, InfluxDbMetadataHandler.toArrowType("TIMESTAMP"));
         assertEquals(Types.MinorType.VARCHAR, InfluxDbMetadataHandler.toArrowType("UNKNOWN_TYPE"));
+    }
+
+    @Test
+    public void testEnhancePartitionSchemaAddsTimeColumnsOnlyWhenParallelismEnabled()
+    {
+        final SchemaBuilder onBuilder = SchemaBuilder.newBuilder();
+        handlerWithParallelism("true", "4").enhancePartitionSchema(onBuilder,
+                mock(GetTableLayoutRequest.class));
+        final Schema on = onBuilder.build();
+        assertTrue(on.findField("time_lower") != null && on.findField("time_upper") != null);
+
+        final SchemaBuilder offBuilder = SchemaBuilder.newBuilder();
+        handlerWithParallelism("false", "4").enhancePartitionSchema(offBuilder,
+                mock(GetTableLayoutRequest.class));
+        assertTrue(offBuilder.build().getFields().isEmpty());
+    }
+
+    @Test
+    public void testExtractTimeRangeReturnsNullWithoutBounds()
+    {
+        final Constraints empty = new Constraints(new HashMap<>(), Collections.emptyList(),
+                Collections.emptyList(), Constraints.DEFAULT_NO_LIMIT, null, null);
+        assertNull(InfluxDbMetadataHandler.extractTimeRange(empty));
+    }
+
+    @Test
+    public void testGetPartitionsWritesSingleUnboundedPartitionWhenNoTimeRange() throws Exception
+    {
+        final InfluxDbMetadataHandler pHandler = handlerWithParallelism("true", "8");
+        final Schema partSchema = SchemaBuilder.newBuilder()
+                        .addField("time_lower", Types.MinorType.BIGINT.getType())
+                        .addField("time_upper", Types.MinorType.BIGINT.getType())
+                        .build();
+        final Block block = allocator.createBlock(partSchema);
+        block.constrain(ConstraintEvaluator.emptyEvaluator());
+
+        final AtomicInteger written = new AtomicInteger();
+        final BlockWriter writer = mock(BlockWriter.class);
+        Mockito.doAnswer(inv -> {
+            final BlockWriter.RowWriter rw = inv.getArgument(0);
+            written.set(rw.writeRows(block, 0));
+            return null;
+        }).when(writer).writeRows(org.mockito.ArgumentMatchers.any());
+
+        final Constraints noBounds = new Constraints(new HashMap<>(), Collections.emptyList(),
+                Collections.emptyList(), Constraints.DEFAULT_NO_LIMIT, null, null);
+        final GetTableLayoutRequest request =
+                new GetTableLayoutRequest(IDENTITY, "q", "catalog",
+                        new TableName("mydb", "cpu"), noBounds, partSchema, Collections.emptySet());
+        final QueryStatusChecker checker = mock(QueryStatusChecker.class);
+
+        pHandler.getPartitions(writer, request, checker);
+        // No time predicate -> exactly one unbounded partition.
+        assertEquals(1, written.get());
+    }
+
+    @Test
+    public void testDoGetSplitsWithTimeBoundsCreatesSplitPerPartition() throws Exception
+    {
+        final Schema partSchema = SchemaBuilder.newBuilder()
+                        .addField("time_lower", Types.MinorType.BIGINT.getType())
+                        .addField("time_upper", Types.MinorType.BIGINT.getType())
+                        .build();
+        final Block partitions = allocator.createBlock(partSchema);
+        partitions.constrain(ConstraintEvaluator.emptyEvaluator());
+        partitions.setValue("time_lower", 0, 1000L);
+        partitions.setValue("time_upper", 0, 2000L);
+        partitions.setValue("time_lower", 1, 2000L);
+        partitions.setValue("time_upper", 1, 3000L);
+        partitions.setRowCount(2);
+
+        final Constraints constraints = new Constraints(new HashMap<>(), Collections.emptyList(),
+                Collections.emptyList(), Constraints.DEFAULT_NO_LIMIT, null, null);
+        final GetSplitsRequest request = new GetSplitsRequest(IDENTITY, "q", "catalog",
+                        new TableName("mydb", "cpu"), partitions, List.of("time_lower", "time_upper"), constraints, null);
+
+        final GetSplitsResponse response = handler.doGetSplits(allocator, request);
+        assertEquals(2, response.getSplits().size());
+        assertTrue(response.getSplits().stream()
+                .allMatch(s -> s.getProperty("time_lower") != null && s.getProperty("time_upper") != null));
+    }
+
+    @Test
+    public void testDoGetSplitsWithoutTimeColumnsCreatesSingleSplit() throws Exception
+    {
+        final Schema partSchema = SchemaBuilder.newBuilder()
+                        .addField("partitionId", Types.MinorType.INT.getType())
+                        .build();
+        final Block partitions = allocator.createBlock(partSchema);
+        partitions.constrain(ConstraintEvaluator.emptyEvaluator());
+        partitions.setValue("partitionId", 0, 1);
+        partitions.setRowCount(1);
+
+        final Constraints constraints = new Constraints(new HashMap<>(), Collections.emptyList(),
+                Collections.emptyList(), Constraints.DEFAULT_NO_LIMIT, null, null);
+        final GetSplitsRequest request = new GetSplitsRequest(IDENTITY, "q", "catalog",
+                        new TableName("mydb", "cpu"), partitions, Collections.emptyList(), constraints, null);
+
+        final GetSplitsResponse response = handler.doGetSplits(allocator, request);
+        assertEquals(1, response.getSplits().size());
+    }
+
+    private InfluxDbMetadataHandler handlerWithParallelism(final String enabled, final String count)
+    {
+        final Map<String, String> config = new HashMap<>();
+        config.put("spill_bucket", "test-bucket");
+        config.put("spill_prefix", "test-prefix");
+        config.put("INFLUXDB3_HOST_URL", "https://localhost:8086");
+        config.put("INFLUXDB3_AUTH_TOKEN", "test-token");
+        config.put("enable_query_parallelism", enabled);
+        config.put("query_parallelism_count", count);
+        return new InfluxDbMetadataHandler(
+                mockFactory,
+                new LocalKeyFactory(),
+                mock(SecretsManagerClient.class),
+                mock(AthenaClient.class),
+                "test-bucket",
+                "test-prefix",
+                config);
     }
 }
