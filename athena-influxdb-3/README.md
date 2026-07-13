@@ -6,6 +6,7 @@ This connector enables Amazon Athena to query **InfluxDB 3** time-series data (i
 - [Overview](#overview)
 - [Supported and unsupported data types](#supported-and-unsupported-data-types)
 - [Predicate & compute pushdown](#predicate--compute-pushdown)
+- [Query passthrough](#query-passthrough)
 - [Split strategy & query parallelism](#split-strategy--query-parallelism)
 - [Record reads (field extraction)](#record-reads-field-extraction)
 - [Backpressure](#backpressure)
@@ -52,8 +53,25 @@ The connector advertises its capabilities via `doGetDataSourceCapabilities` and 
 
 **Why push down:** InfluxDB/DataFusion is far more efficient at filtering, sorting, and limiting at the source than shipping rows to Athena and filtering there. Pushdown minimizes the bytes marshalled back through the Lambda. Values are rendered as SQL literals with proper quoting/escaping; Athena's Trino-packed `TIMESTAMP WITH TIME ZONE` constants are unpacked to UTC millisecond `TIMESTAMP` literals so comparisons against the source `time` column are apples-to-apples.
 
-## Split strategy & query parallelism
+## Query passthrough
 
+The connector supports **query passthrough**, letting you run native InfluxDB 3 SQL verbatim (bypassing Athena's SQL planning) via the `system.query` table function:
+
+```sql
+SELECT * FROM TABLE(
+  system.query(
+    DATABASE => 'mydb',
+    QUERY => 'SELECT host, mean(usage_idle) FROM cpu WHERE time > now() - INTERVAL ''1 hour'' GROUP BY host'
+  )
+);
+```
+
+- `DATABASE` — the InfluxDB database the query runs against (the Flight SQL client is per-database, so this is required).
+- `QUERY` — the native InfluxDB 3 SQL to execute.
+
+The result schema is inferred by running the query and inspecting the Arrow schema of its result, mapped to the same Athena types as normal reads (timestamps → millisecond UTC, tags/strings → VARCHAR, etc.). Passthrough is enabled by default; set `enable_query_passthrough=false` to disable it.
+
+## Split strategy & query parallelism
 A **split** is Athena's unit of parallelism — each split is read by a separate concurrent invocation of the RecordHandler Lambda.
 
 - **Default (parallelism disabled):** the connector emits a single split that scans the whole (filtered) measurement. `enhancePartitionSchema` adds no partition columns, so the SDK short-circuits `doGetTableLayout` and `getPartitions` is not invoked.
@@ -88,9 +106,10 @@ Deploy with the SAM template (`athena-influxdb.yaml`) via the Serverless Applica
 Timestream for InfluxDB clusters live in a VPC, so the connector Lambda must be attached to that VPC via the `SubnetIds` and `SecurityGroupIds` parameters. Two things to get right:
 
 1. **Reaching AWS services from the VPC.** A VPC-attached Lambda loses default internet egress. It still needs to reach **Secrets Manager**, **S3** (spill), and **Athena** (`GetQueryExecution`). Provide this with **VPC endpoints** (interface endpoints for Secrets Manager and Athena; a gateway endpoint for S3) **or** a **NAT gateway**.
-2. **Reaching the cluster.** Give the Lambda its own security group and add an **ingress rule to the cluster's security group** allowing the InfluxDB port (default **8181**) from the Lambda's security group.
-   - This scoped, security-group-referenced rule requires the cluster to be reached over a **private** address (i.e., the cluster is *not* publicly accessible), which is the recommended posture.
-   - If the cluster is **publicly accessible**, its endpoint resolves to a **public IP** that a VPC Lambda cannot reach without a **NAT gateway**; in that case the ingress rule must allow the **NAT's Elastic IP** (a `/32`), since the cluster sees the NAT's address, not the Lambda's security group.
+2. **Reaching the cluster.** Pass your `VpcId` (with `SubnetIds`) and the template **creates a dedicated security group** for the Lambda and attaches it. After the stack deploys, read the stack **Outputs** — `ConnectorSecurityGroupId` and `RequiredClusterSecurityGroupRule` tell you the exact inbound rule to add to your **cluster's** security group (Custom TCP, the InfluxDB port, source = the connector's security group). This one manual step is intentionally left to you so that the template never modifies a security group it doesn't own.
+   - The scoped, security-group-referenced rule assumes the cluster is reached over a **private** address (cluster *not* publicly accessible), the recommended posture.
+   - If the cluster is **publicly accessible**, its endpoint resolves to a **public IP** that a VPC Lambda cannot reach without a **NAT gateway**; in that case allow the **NAT's Elastic IP** (a `/32`) on the InfluxDB port instead — the Output text calls this out too.
+   - If you prefer to manage the security group yourself, omit `VpcId` and pass your own `SecurityGroupIds`.
 
 ### Secret
 
@@ -108,8 +127,11 @@ Create a Secrets Manager secret holding the InfluxDB token and pass its name/ARN
 | `influxdb_database` (`InfluxDbDatabase`) | Optional default database; if empty, all accessible databases are exposed. |
 | `enable_query_parallelism` | `true` to enable time-based split parallelism (default `false`). |
 | `query_parallelism_count` | Number of time buckets/splits when parallelism is enabled (default `8`, clamped). |
+| `enable_query_passthrough` | `true` (default) to expose the `system.query` passthrough table function. |
 | `token_refresh_max_retries` | Max token-refresh retries on auth failure (default `3`). |
 | `SubnetIds` / `SecurityGroupIds` | VPC config (required for Timestream for InfluxDB). |
+| `VpcId` | If set (with `SubnetIds`), the template **creates a dedicated security group** for the Lambda in this VPC and outputs the exact cluster ingress rule to add. If empty, `SecurityGroupIds` is used as-is. |
+| `InfluxDbPort` | Cluster port (default `8181`); used to render the required ingress rule in the stack Outputs. |
 | `LambdaTimeout` / `LambdaMemory` | Lambda runtime limits. |
 | `DisableSpillEncryption` | Disable spill encryption (not recommended). |
 

@@ -45,7 +45,15 @@ import com.influxdb.v3.client.InfluxDBClient;
 import software.amazon.awssdk.services.athena.AthenaClient;
 import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
 
+import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.memory.RootAllocator;
+import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.types.FloatingPointPrecision;
+import org.apache.arrow.vector.types.TimeUnit;
 import org.apache.arrow.vector.types.Types;
+import org.apache.arrow.vector.types.pojo.ArrowType;
+import org.apache.arrow.vector.types.pojo.Field;
+import org.apache.arrow.vector.types.pojo.FieldType;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.junit.After;
 import org.junit.Before;
@@ -392,5 +400,47 @@ public class InfluxDbMetadataHandlerTest
                 "test-bucket",
                 "test-prefix",
                 config);
+    }
+
+    @Test
+    public void testDoGetDataSourceCapabilitiesIncludesQueryPassthrough()
+    {
+        final com.amazonaws.athena.connector.lambda.metadata.GetDataSourceCapabilitiesResponse response =
+                handler.doGetDataSourceCapabilities(allocator,
+                        new com.amazonaws.athena.connector.lambda.metadata.GetDataSourceCapabilitiesRequest(
+                                IDENTITY, "queryId", "catalog"));
+        assertTrue(response.getCapabilities().containsKey("SYSTEM.QUERY"));
+    }
+
+    @Test
+    public void testDoGetQueryPassthroughSchemaDerivesSchemaFromResult() throws Exception
+    {
+        try (BufferAllocator arrow = new RootAllocator()) {
+            final Schema resultSchema = new Schema(List.of(
+                    new Field("host", FieldType.nullable(new ArrowType.Utf8()), null),
+                    new Field("usage_idle", FieldType.nullable(
+                            new ArrowType.FloatingPoint(FloatingPointPrecision.DOUBLE)), null),
+                    new Field("time", FieldType.nullable(
+                            new ArrowType.Timestamp(TimeUnit.NANOSECOND, "UTC")), null)));
+            final VectorSchemaRoot root = VectorSchemaRoot.create(resultSchema, arrow);
+            when(mockClient.queryBatches(anyString())).thenReturn(Stream.of(root).onClose(root::close));
+
+            final Map<String, String> args = new HashMap<>();
+            args.put("schemaFunctionName", "SYSTEM.QUERY");
+            args.put(InfluxDbQueryPassthrough.DATABASE, "mydb");
+            args.put(InfluxDbQueryPassthrough.QUERY, "SELECT host, usage_idle, time FROM cpu");
+
+            final GetTableResponse response = handler.doGetQueryPassthroughSchema(allocator,
+                    new GetTableRequest(IDENTITY, "queryId", "catalog", new TableName("system", "query"), args));
+
+            final Schema derived = response.getSchema();
+            assertEquals(Types.MinorType.VARCHAR,
+                    Types.getMinorTypeForArrowType(derived.findField("host").getType()));
+            assertEquals(Types.MinorType.FLOAT8,
+                    Types.getMinorTypeForArrowType(derived.findField("usage_idle").getType()));
+            // Nanosecond source timestamp is normalized to millisecond UTC.
+            assertEquals(Types.MinorType.TIMESTAMPMILLITZ,
+                    Types.getMinorTypeForArrowType(derived.findField("time").getType()));
+        }
     }
 }

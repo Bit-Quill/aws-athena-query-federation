@@ -226,6 +226,36 @@ public class InfluxDbRecordHandlerTest
     }
 
     @Test
+    public void testReadWithConstraintQueryPassthrough() throws Exception
+    {
+        final Schema schema = projectionSchema();
+        final VectorSchemaRoot root = buildBatch();
+        when(mockClient.queryBatches(anyString())).thenReturn(Stream.of(root).onClose(root::close));
+        final QueryStatusChecker checker = mock(QueryStatusChecker.class);
+        when(checker.isQueryRunning()).thenReturn(true);
+
+        final Map<String, String> qpt = new HashMap<>();
+        qpt.put("schemaFunctionName", "SYSTEM.QUERY");
+        qpt.put(InfluxDbQueryPassthrough.DATABASE, "mydb");
+        qpt.put(InfluxDbQueryPassthrough.QUERY, "SELECT host, usage_idle, time FROM cpu");
+        final Constraints constraints = new Constraints(new HashMap<>(), Collections.emptyList(),
+                Collections.emptyList(), Constraints.DEFAULT_NO_LIMIT, qpt, null);
+        final Split split = mock(Split.class);
+        when(split.getProperty(anyString())).thenReturn(null);
+        final ReadRecordsRequest request = new ReadRecordsRequest(IDENTITY, "catalog", "queryId",
+                new TableName("system", "query"), schema, split, constraints, 100_000, 100_000);
+
+        final Block block = blockAllocator.createBlock(schema);
+        block.constrain(ConstraintEvaluator.emptyEvaluator());
+        final AtomicInteger rowsWritten = new AtomicInteger();
+        final BlockSpiller spiller = spillerWritingTo(block, rowsWritten);
+
+        // Runs the passthrough QUERY verbatim against the DATABASE argument.
+        handler.readWithConstraint(spiller, request, checker);
+        assertEquals(2, rowsWritten.get());
+    }
+
+    @Test
     public void testToZonedDateTimeNanoseconds()
     {
         final long nanos = 1782258710000000000L;
