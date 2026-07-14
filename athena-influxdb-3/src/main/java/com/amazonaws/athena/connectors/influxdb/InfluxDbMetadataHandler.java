@@ -50,9 +50,11 @@ import com.amazonaws.athena.connector.lambda.metadata.optimizations.pushdown.Fil
 import com.amazonaws.athena.connector.lambda.metadata.optimizations.pushdown.LimitPushdownSubType;
 import com.amazonaws.athena.connector.lambda.metadata.optimizations.pushdown.TopNPushdownSubType;
 import com.amazonaws.athena.connector.lambda.security.EncryptionKeyFactory;
+import com.amazonaws.athena.connector.util.PaginationHelper;
 import com.amazonaws.athena.connectors.influxdb.InfluxDbConnectionFactory.DatabaseInfo;
 import com.google.common.collect.ImmutableMap;
 import org.apache.arrow.util.VisibleForTesting;
+import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.complex.reader.FieldReader;
 import org.apache.arrow.vector.types.Types;
 import org.apache.arrow.vector.types.pojo.ArrowType;
@@ -90,6 +92,7 @@ public class InfluxDbMetadataHandler
     private static final int MAX_SPLIT_COUNT = 16;
 
     private final InfluxDbConnectionFactory connectionFactory;
+    private final InfluxDbQueryPassthrough queryPassthrough = new InfluxDbQueryPassthrough();
 
     public InfluxDbMetadataHandler(final Map<String, String> configOptions)
     {
@@ -129,7 +132,85 @@ public class InfluxDbMetadataHandler
                                 .map(sf -> sf.getFunctionName().getFunctionName())
                                 .toArray(String[]::new))));
 
+        // Advertise the system.query(DATABASE, QUERY) passthrough (unless disabled via config).
+        queryPassthrough.addQueryPassthroughCapabilityIfEnabled(capabilities, configOptions);
+
         return new GetDataSourceCapabilitiesResponse(request.getCatalogName(), capabilities.build());
+    }
+
+    /**
+     * Derives the result schema for a query passthrough by running the native query and inspecting the Arrow schema of
+     * its first result batch. The InfluxDB Arrow types are mapped to the same Athena types this connector produces for
+     * normal reads, so the RecordHandler's value conversion is identical for passthrough and non-passthrough reads.
+     */
+    @Override
+    public GetTableResponse doGetQueryPassthroughSchema(final BlockAllocator allocator, final GetTableRequest request)
+            throws Exception
+    {
+        if (!request.isQueryPassthrough()) {
+            throw new IllegalArgumentException("doGetQueryPassthroughSchema called without query passthrough arguments");
+        }
+        queryPassthrough.verify(request.getQueryPassthroughArguments());
+        final String database = request.getQueryPassthroughArguments().get(InfluxDbQueryPassthrough.DATABASE);
+        final String query = request.getQueryPassthroughArguments().get(InfluxDbQueryPassthrough.QUERY);
+        logger.info("doGetQueryPassthroughSchema: database={}", database);
+
+        final Schema schema = connectionFactory.executeWithTokenRetry(database, client -> {
+            final SchemaBuilder schemaBuilder = SchemaBuilder.newBuilder();
+            try (Stream<VectorSchemaRoot> batches = client.queryBatches(query)) {
+                final java.util.Optional<VectorSchemaRoot> first = batches.findFirst();
+                if (first.isEmpty()) {
+                    throw new IllegalStateException(
+                            "Query passthrough returned no result schema; cannot infer columns for: " + query);
+                }
+                for (final Field field : first.get().getSchema().getFields()) {
+                    addPassthroughField(schemaBuilder, field);
+                }
+            }
+            return schemaBuilder.build();
+        });
+        return new GetTableResponse(request.getCatalogName(), request.getTableName(), schema);
+    }
+
+    /**
+     * Maps a column from the InfluxDB Flight result's Arrow schema to the Athena field type this connector uses for
+     * normal reads (timestamps normalized to millisecond UTC; tags/strings to VARCHAR; integers to BIGINT).
+     */
+    private static void addPassthroughField(final SchemaBuilder schemaBuilder, final Field field)
+    {
+        final String name = field.getName();
+        switch (Types.getMinorTypeForArrowType(field.getType())) {
+            case TIMESTAMPNANOTZ:
+            case TIMESTAMPMICROTZ:
+            case TIMESTAMPMILLITZ:
+            case TIMESTAMPSECTZ:
+            case TIMESTAMPNANO:
+            case TIMESTAMPMICRO:
+            case TIMESTAMPMILLI:
+            case TIMESTAMPSEC:
+            case DATEMILLI:
+            case DATEDAY:
+                schemaBuilder.addField(name, new ArrowType.Timestamp(
+                        org.apache.arrow.vector.types.TimeUnit.MILLISECOND, "UTC"));
+                break;
+            case BIGINT:
+            case INT:
+            case SMALLINT:
+            case TINYINT:
+                schemaBuilder.addField(name, Types.MinorType.BIGINT.getType());
+                break;
+            case FLOAT8:
+            case FLOAT4:
+                schemaBuilder.addField(name, Types.MinorType.FLOAT8.getType());
+                break;
+            case BIT:
+                schemaBuilder.addField(name, Types.MinorType.BIT.getType());
+                break;
+            default:
+                // Tags (dictionary-encoded Utf8), Utf8, and anything else, render as VARCHAR.
+                schemaBuilder.addField(name, Types.MinorType.VARCHAR.getType());
+                break;
+        }
     }
 
     @Override
@@ -179,7 +260,10 @@ public class InfluxDbMetadataHandler
             }
             return null;
         });
-        return new ListTablesResponse(request.getCatalogName(), tables, null);
+        // Manual (in-memory) pagination: InfluxDB returns the full table list in one query, and Athena
+        // may page a large catalog in via repeated calls using the returned continuation token.
+        return PaginationHelper.manualPagination(tables, request.getNextToken(), request.getPageSize(),
+                request.getCatalogName());
     }
 
     @Override

@@ -63,6 +63,18 @@ Parameters:
     Description: "(Optional) Comma-delimited list of subnet IDs for VPC access. Required for Timestream for InfluxDB."
     Type: CommaDelimitedList
     Default: ''
+  VpcId:
+    Description: "(Optional) VPC ID in which to create a dedicated security group for the connector Lambda. Provide this (together with SubnetIds) for Timestream for InfluxDB so the template creates the Lambda's security group and outputs the exact ingress rule to add to your cluster's security group. If left empty, the connector uses the security groups given in SecurityGroupIds instead."
+    Type: String
+    Default: ''
+  InfluxDbPort:
+    Description: "The TCP port the InfluxDB cluster listens on. Used only to render the required cluster security-group ingress rule in the stack Outputs."
+    Type: Number
+    Default: 8181
+  EnableQueryPassthrough:
+    Description: "(Optional) Whether to enable query passthrough (the system.query table function). Defaults to 'true'."
+    Type: String
+    Default: 'true'
   EnableQueryParallelism:
     Description: "(Optional) Whether to enable query parallelism. When this is enabled, queries with lower and upper time bounds will be split into multiple Lambda functions in parallel, for improved query performance."
     Type: String
@@ -74,7 +86,18 @@ Parameters:
 Conditions:
   HasPermissionsBoundary: !Not [ !Equals [ !Ref PermissionsBoundaryARN, "" ] ]
   HasVpcConfig: !Not [ !Equals [ !Join [ "", !Ref SubnetIds ], "" ] ]
+  CreateConnectorSecurityGroup: !Not [ !Equals [ !Ref VpcId, "" ] ]
 Resources:
+  # Dedicated security group for the connector Lambda, created when a VpcId is provided.
+  # Reference this group's ID as the source in an inbound rule on your cluster's security group.
+  ConnectorSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Condition: CreateConnectorSecurityGroup
+    Properties:
+      GroupDescription: !Sub 'Egress security group for the ${AthenaCatalogName} Athena InfluxDB connector Lambda'
+      VpcId: !Ref VpcId
+      # Default egress (allow-all) is intentionally retained so the Lambda can reach the cluster
+      # and, via VPC endpoints or a NAT gateway, Secrets Manager / S3 / Athena.
   ConnectorConfig:
     Type: 'AWS::Serverless::Function'
     Properties:
@@ -89,6 +112,7 @@ Resources:
           influxdb_database: !Ref InfluxDbDatabase
           enable_query_parallelism: !Ref EnableQueryParallelism
           query_parallelism_count: !Ref QueryParallelismCount
+          enable_query_passthrough: !Ref EnableQueryPassthrough
           # Apache Arrow (used by the SDK's BlockAllocator) relies on Netty direct
           # memory via sun.misc.Unsafe, which is disabled by default on the java25
           # runtime. These flags re-enable it (mirrors the pom's surefire argLine).
@@ -103,7 +127,10 @@ Resources:
       PermissionsBoundary: !If [ HasPermissionsBoundary, !Ref PermissionsBoundaryARN, !Ref "AWS::NoValue" ]
       VpcConfig: !If
         - HasVpcConfig
-        - SecurityGroupIds: !Ref SecurityGroupIds
+        - SecurityGroupIds: !If
+            - CreateConnectorSecurityGroup
+            - [ !Ref ConnectorSecurityGroup ]
+            - !Ref SecurityGroupIds
           SubnetIds: !Ref SubnetIds
         - !Ref "AWS::NoValue"
       Policies:
@@ -131,3 +158,16 @@ Resources:
               Effect: Allow
               Resource: '*'
           Version: '2012-10-17'
+Outputs:
+  ConnectorSecurityGroupId:
+    Condition: CreateConnectorSecurityGroup
+    Description: "Security group created for the connector Lambda. Use this as the SOURCE in your cluster's inbound rule."
+    Value: !Ref ConnectorSecurityGroup
+  RequiredClusterSecurityGroupRule:
+    Condition: CreateConnectorSecurityGroup
+    Description: "MANUAL STEP: the inbound rule to add to your Timestream for InfluxDB cluster's security group after this stack finishes deploying."
+    Value: !Sub "Add an INBOUND rule to your cluster's security group -> Type: Custom TCP, Port: ${InfluxDbPort}, Source: ${ConnectorSecurityGroup} (this connector's security group). If your cluster is publicly accessible and the Lambda subnets egress via a NAT gateway, instead allow the NAT gateway's Elastic IP as a /32 CIDR on TCP ${InfluxDbPort}. Also, if the Lambda reaches Secrets Manager/Athena via interface VPC endpoints whose security group restricts inbound, allow TCP 443 from ${ConnectorSecurityGroup} on that endpoints' security group."
+  VpcEgressRequirement:
+    Condition: HasVpcConfig
+    Description: "VPC egress requirement for the connector Lambda."
+    Value: "The connector Lambda runs inside your VPC and must reach Secrets Manager, S3, and Athena. Ensure the chosen subnets have the needed VPC endpoints (interface endpoints for secretsmanager and athena; a gateway endpoint for s3) or a NAT gateway with a route to the internet."

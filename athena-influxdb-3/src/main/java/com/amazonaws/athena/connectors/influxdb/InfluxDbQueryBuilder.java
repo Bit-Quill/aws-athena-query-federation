@@ -110,7 +110,6 @@ public class InfluxDbQueryBuilder
             sql.append(" LIMIT ").append(constraints.getLimit());
         }
 
-        logger.info("buildSql: {}", sql);
         return sql.toString();
     }
 

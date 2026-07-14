@@ -60,6 +60,7 @@ public class InfluxDbRecordHandler
     private static final ZoneId UTC = ZoneId.of("UTC");
 
     private final InfluxDbConnectionFactory connectionFactory;
+    private final InfluxDbQueryPassthrough queryPassthrough = new InfluxDbQueryPassthrough();
 
     public InfluxDbRecordHandler(final Map<String, String> configOptions)
     {
@@ -89,22 +90,36 @@ public class InfluxDbRecordHandler
             throws Exception
     {
         final Schema schema = recordsRequest.getSchema();
-        String tableName = recordsRequest.getTableName().getTableName();
-        final String schemaName = recordsRequest.getTableName().getSchemaName();
-
-        // Use the original case-sensitive table name stored by the MetadataHandler.
-        final String originalTableName = schema.getCustomMetadata().get("originalTableName");
-        if (originalTableName != null) {
-            tableName = originalTableName;
+        final String resolvedDb;
+        final String sql;
+        if (recordsRequest.getConstraints().isQueryPassThrough()) {
+            // Query passthrough: run the caller's native SQL verbatim against the supplied database.
+            final Map<String, String> qptArgs = recordsRequest.getConstraints().getQueryPassthroughArguments();
+            queryPassthrough.verify(qptArgs);
+            resolvedDb = qptArgs.get(InfluxDbQueryPassthrough.DATABASE);
+            sql = qptArgs.get(InfluxDbQueryPassthrough.QUERY);
+            logger.info("readWithConstraint: query passthrough against database={}", resolvedDb);
         }
+        else {
+            String tableName = recordsRequest.getTableName().getTableName();
+            final String schemaName = recordsRequest.getTableName().getSchemaName();
 
-        final String resolvedDb = schema.getCustomMetadata().get("resolvedDatabaseName");
+            // Use the original case-sensitive table name stored by the MetadataHandler.
+            final String originalTableName = schema.getCustomMetadata().get("originalTableName");
+            if (originalTableName != null) {
+                tableName = originalTableName;
+            }
 
-        final String timeLower = recordsRequest.getSplit().getProperty(PART_TIME_LOWER);
-        final String timeUpper = recordsRequest.getSplit().getProperty(PART_TIME_UPPER);
-        final String sql = InfluxDbQueryBuilder.buildSql(schema, tableName, recordsRequest.getConstraints(),
-                timeLower, timeUpper);
-        logger.info("readWithConstraint: schema={}, sql={}", schemaName, sql);
+            resolvedDb = schema.getCustomMetadata().get("resolvedDatabaseName");
+
+            final String timeLower = recordsRequest.getSplit().getProperty(PART_TIME_LOWER);
+            final String timeUpper = recordsRequest.getSplit().getProperty(PART_TIME_UPPER);
+            sql = InfluxDbQueryBuilder.buildSql(schema, tableName, recordsRequest.getConstraints(),
+                    timeLower, timeUpper);
+            logger.info("readWithConstraint: schema={}, table={}", schemaName, tableName);
+        }
+        // The SQL embeds constraint literal values (possible PII) so it is logged only at debug.
+        logger.debug("readWithConstraint SQL: {}", sql);
 
         final List<Field> fields = schema.getFields();
         // Pre-compute which columns are timestamps
