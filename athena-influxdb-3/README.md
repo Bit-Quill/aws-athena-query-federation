@@ -101,11 +101,75 @@ The resolved token and the per-database clients are cached for the Lambda contai
 
 Deploy with the SAM template (`athena-influxdb.yaml`) via the Serverless Application Repository or `sam deploy`.
 
+### Build and deploy (SAM CLI)
+
+Prerequisites: JDK 25, Maven, the SAM CLI, and AWS credentials for the target account.
+
+1. **Build the shaded Lambda jar** (the template's `CodeUri` points at it):
+
+   ```bash
+   cd athena-influxdb-3
+   mvn clean package
+   ```
+
+2. **Create a Secrets Manager secret** holding the InfluxDB token (a plain-string secret; or JSON with a `token` key):
+
+   ```bash
+   aws secretsmanager create-secret \
+     --name athena-influxdb-token \
+     --secret-string '<your-influxdb-token>' \
+     --region <region>
+   ```
+
+3. **Deploy.** For **Amazon Timestream for InfluxDB**, pass `VpcId` + `SubnetIds` so the template creates the connector's security group; the subnets must be able to reach Secrets Manager, S3, and Athena (see [Networking](#networking-amazon-timestream-for-influxdb)):
+
+   ```bash
+   sam deploy \
+     --template-file athena-influxdb.yaml \
+     --stack-name athena-influxdb-connector \
+     --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND \
+     --resolve-s3 \
+     --region <region> \
+     --parameter-overrides \
+       AthenaCatalogName=athena_influxdb \
+       SpillBucket=<your-spill-bucket> \
+       InfluxDbHost=https://<cluster-endpoint>:8181 \
+       InfluxDbSecretId=athena-influxdb-token \
+       VpcId=<vpc-id> \
+       "SubnetIds=<subnet-1>,<subnet-2>,<subnet-3>" \
+       InfluxDbPort=8181
+   ```
+
+   For a non-VPC source (e.g., InfluxDB Cloud reachable over the internet), omit `VpcId`/`SubnetIds`.
+
+4. **Add the cluster ingress rule (manual, one time).** After the stack reaches `CREATE_COMPLETE`, read its Outputs and apply the `RequiredClusterSecurityGroupRule` to your cluster's security group:
+
+   ```bash
+   aws cloudformation describe-stacks --stack-name athena-influxdb-connector \
+     --region <region> --query 'Stacks[0].Outputs' --output table
+   ```
+
+   Then add an **inbound** rule to your **cluster's** security group — Custom TCP, port `8181`, source = the `ConnectorSecurityGroupId` from the Outputs (or the NAT gateway's Elastic IP `/32` if the cluster is publicly accessible and the Lambda egresses via NAT).
+
+5. **Register the Athena data source** (if not created automatically), so you can query it:
+
+   ```bash
+   aws athena create-data-catalog --name athena_influxdb --type LAMBDA \
+     --parameters function=arn:aws:lambda:<region>:<account>:function:athena_influxdb \
+     --region <region>
+   ```
+
+6. **Verify:**
+
+   ```sql
+   SHOW DATABASES IN `athena_influxdb`;
+   ```
+
 ### Networking (Amazon Timestream for InfluxDB)
 
 Timestream for InfluxDB clusters live in a VPC, so the connector Lambda must be attached to that VPC via the `SubnetIds` and `SecurityGroupIds` parameters. Two things to get right:
 
-1. **Reaching AWS services from the VPC.** A VPC-attached Lambda loses default internet egress. It still needs to reach **Secrets Manager**, **S3** (spill), and **Athena** (`GetQueryExecution`). Provide this with **VPC endpoints** (interface endpoints for Secrets Manager and Athena; a gateway endpoint for S3) **or** a **NAT gateway**.
+1. **Reaching AWS services from the VPC.** A VPC-attached Lambda loses default internet egress. It still needs to reach **Secrets Manager**, **S3** (spill), and **Athena** (`GetQueryExecution`). Provide this with **VPC endpoints** (interface endpoints for Secrets Manager and Athena; a gateway endpoint for S3) **or** a **NAT gateway**. If you use **interface VPC endpoints** and let the template create the connector's security group, remember that those endpoints are themselves gated by a security group — add an inbound rule to the **endpoints' security group** allowing **TCP 443 from the connector's security group** (the `ConnectorSecurityGroupId` output), or the Lambda's calls to Secrets Manager/Athena will be blocked.
 2. **Reaching the cluster.** Pass your `VpcId` (with `SubnetIds`) and the template **creates a dedicated security group** for the Lambda and attaches it. After the stack deploys, read the stack **Outputs** — `ConnectorSecurityGroupId` and `RequiredClusterSecurityGroupRule` tell you the exact inbound rule to add to your **cluster's** security group (Custom TCP, the InfluxDB port, source = the connector's security group). This one manual step is intentionally left to you so that the template never modifies a security group it doesn't own.
    - The scoped, security-group-referenced rule assumes the cluster is reached over a **private** address (cluster *not* publicly accessible), the recommended posture.
    - If the cluster is **publicly accessible**, its endpoint resolves to a **public IP** that a VPC Lambda cannot reach without a **NAT gateway**; in that case allow the **NAT's Elastic IP** (a `/32`) on the InfluxDB port instead — the Output text calls this out too.

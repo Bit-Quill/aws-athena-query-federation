@@ -166,7 +166,7 @@ Outputs:
   RequiredClusterSecurityGroupRule:
     Condition: CreateConnectorSecurityGroup
     Description: "MANUAL STEP: the inbound rule to add to your Timestream for InfluxDB cluster's security group after this stack finishes deploying."
-    Value: !Sub "Add an INBOUND rule to your cluster's security group -> Type: Custom TCP, Port: ${InfluxDbPort}, Source: ${ConnectorSecurityGroup} (this connector's security group). If your cluster is publicly accessible and the Lambda subnets egress via a NAT gateway, instead allow the NAT gateway's Elastic IP as a /32 CIDR on TCP ${InfluxDbPort}."
+    Value: !Sub "Add an INBOUND rule to your cluster's security group -> Type: Custom TCP, Port: ${InfluxDbPort}, Source: ${ConnectorSecurityGroup} (this connector's security group). If your cluster is publicly accessible and the Lambda subnets egress via a NAT gateway, instead allow the NAT gateway's Elastic IP as a /32 CIDR on TCP ${InfluxDbPort}. Also, if the Lambda reaches Secrets Manager/Athena via interface VPC endpoints whose security group restricts inbound, allow TCP 443 from ${ConnectorSecurityGroup} on that endpoints' security group."
   VpcEgressRequirement:
     Condition: HasVpcConfig
     Description: "VPC egress requirement for the connector Lambda."
