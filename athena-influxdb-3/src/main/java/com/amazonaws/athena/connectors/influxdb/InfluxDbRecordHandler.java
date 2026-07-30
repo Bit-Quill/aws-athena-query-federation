@@ -105,9 +105,9 @@ public class InfluxDBRecordHandler
             final String schemaName = recordsRequest.getTableName().getSchemaName();
 
             // Use the original case-sensitive table name stored by the MetadataHandler.
-            final String originalTableName = schema.getCustomMetadata().get("originalTableName");
-            if (originalTableName != null) {
-                tableName = originalTableName;
+            final String caseSensitiveTableName = schema.getCustomMetadata().get("caseSensitiveTableName");
+            if (caseSensitiveTableName != null) {
+                tableName = caseSensitiveTableName;
             }
 
             resolvedDB = schema.getCustomMetadata().get("resolvedDatabaseName");

@@ -119,7 +119,7 @@ public class InfluxDBRecordHandlerTest
     private Schema projectionSchema()
     {
         return new SchemaBuilder()
-                .addMetadata("originalTableName", "cpu")
+                .addMetadata("caseSensitiveTableName", "cpu")
                 .addMetadata("resolvedDatabaseName", "testdb")
                 .addField("host", Types.MinorType.VARCHAR.getType())
                 .addField("usage_idle", Types.MinorType.FLOAT8.getType())
