@@ -51,8 +51,8 @@ import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.DEFAULT
 import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.ENV_INFLUXDB_HOST;
 import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.ENV_INFLUXDB_TOKEN;
 import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.ENV_INFLUXDB_TOKEN_KEY;
+import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.MAX_EXCEPTION_CAUSE_SEARCH_DEPTH;
 import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.TOKEN_REFRESH_MAX_RETRIES;
-
 /**
  * Creates InfluxDB client connections, resolving the auth token from Secrets Manager.
  *
@@ -180,7 +180,7 @@ public class InfluxDbConnectionFactory
     static boolean isThrottle(final Throwable throwable)
     {
         Throwable cause = throwable;
-        for (int depth = 0; cause != null && depth < 32; cause = cause.getCause(), depth++) {
+        for (int depth = 0; cause != null && depth < MAX_EXCEPTION_CAUSE_SEARCH_DEPTH; cause = cause.getCause(), depth++) {
             if (cause instanceof FlightRuntimeException
                     && ((FlightRuntimeException) cause).status().code() == FlightStatusCode.RESOURCE_EXHAUSTED) {
                 return true;
@@ -218,7 +218,7 @@ public class InfluxDbConnectionFactory
     static boolean isAuthError(final Throwable throwable)
     {
         Throwable cause = throwable;
-        for (int depth = 0; cause != null && depth < 32; cause = cause.getCause(), depth++) {
+        for (int depth = 0; cause != null && depth < MAX_EXCEPTION_CAUSE_SEARCH_DEPTH; cause = cause.getCause(), depth++) {
             if (cause instanceof FlightRuntimeException) {
                 final FlightStatusCode code = ((FlightRuntimeException) cause).status().code();
                 if (code == FlightStatusCode.UNAUTHENTICATED || code == FlightStatusCode.UNAUTHORIZED) {
