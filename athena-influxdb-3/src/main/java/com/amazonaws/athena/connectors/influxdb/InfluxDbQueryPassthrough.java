@@ -33,7 +33,7 @@ import java.util.List;
  * <p>Unlike a fully SQL-inferred passthrough, InfluxDB 3's Flight SQL client is bound to a specific database, so the
  * caller must supply both the target {@code DATABASE} and the native {@code QUERY} to run against it.
  */
-public class InfluxDbQueryPassthrough implements QueryPassthroughSignature
+public class InfluxDBQueryPassthrough implements QueryPassthroughSignature
 {
     // The database (InfluxDB schema) the passthrough query runs against.
     public static final String DATABASE = "DATABASE";
@@ -44,7 +44,7 @@ public class InfluxDbQueryPassthrough implements QueryPassthroughSignature
     public static final String NAME = "query";
     public static final List<String> ARGUMENTS = Arrays.asList(DATABASE, QUERY);
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(InfluxDbQueryPassthrough.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(InfluxDBQueryPassthrough.class);
 
     @Override
     public String getFunctionSchema()

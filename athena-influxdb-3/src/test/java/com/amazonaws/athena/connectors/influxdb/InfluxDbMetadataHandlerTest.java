@@ -39,7 +39,7 @@ import com.amazonaws.athena.connector.lambda.metadata.ListTablesRequest;
 import com.amazonaws.athena.connector.lambda.metadata.ListTablesResponse;
 import com.amazonaws.athena.connector.lambda.security.FederatedIdentity;
 import com.amazonaws.athena.connector.lambda.security.LocalKeyFactory;
-import com.amazonaws.athena.connectors.influxdb.InfluxDbConnectionFactory.DatabaseInfo;
+import com.amazonaws.athena.connectors.influxdb.InfluxDBConnectionFactory.DatabaseInfo;
 import com.influxdb.v3.client.InfluxDBClient;
 
 import software.amazon.awssdk.services.athena.AthenaClient;
@@ -78,28 +78,28 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-public class InfluxDbMetadataHandlerTest
+public class InfluxDBMetadataHandlerTest
 {
     private static final FederatedIdentity IDENTITY = new FederatedIdentity("arn", "account",
             Collections.<String, String>emptyMap(), Collections.<String>emptyList(),
             Collections.<String, String>emptyMap());
     private BlockAllocator allocator;
-    private InfluxDbConnectionFactory mockFactory;
+    private InfluxDBConnectionFactory mockFactory;
     private InfluxDBClient mockClient;
-    private InfluxDbMetadataHandler handler;
+    private InfluxDBMetadataHandler handler;
 
     @Before
     public void setUp() throws Exception
     {
         allocator = new BlockAllocatorImpl();
-        mockFactory = mock(InfluxDbConnectionFactory.class);
+        mockFactory = mock(InfluxDBConnectionFactory.class);
         mockClient = mock(InfluxDBClient.class);
         when(mockFactory.getClient(anyString())).thenReturn(mockClient);
         when(mockFactory.getClient(isNull())).thenReturn(mockClient);
         // The real executeWithTokenRetry runs the query against a client from getClient. For these
         // tests, run the caller's lambda directly against the mock client so the query stubs apply.
         when(mockFactory.executeWithTokenRetry(any(), any())).thenAnswer(invocation -> {
-            final InfluxDbConnectionFactory.InfluxDbQuery<?> query = invocation.getArgument(1);
+            final InfluxDBConnectionFactory.InfluxDBQuery<?> query = invocation.getArgument(1);
             return query.run(mockClient);
         });
 
@@ -110,7 +110,7 @@ public class InfluxDbMetadataHandlerTest
         config.put("INFLUXDB3_AUTH_TOKEN", "test-token");
         config.put("influxdb_database", "testdb");
 
-        handler = new InfluxDbMetadataHandler(
+        handler = new InfluxDBMetadataHandler(
                 mockFactory,
                 new com.amazonaws.athena.connector.lambda.security.LocalKeyFactory(),
                 mock(software.amazon.awssdk.services.secretsmanager.SecretsManagerClient.class),
@@ -146,7 +146,7 @@ public class InfluxDbMetadataHandlerTest
         config.put("INFLUXDB3_HOST_URL", "https://localhost:8086");
         config.put("INFLUXDB3_AUTH_TOKEN", "test-token");
 
-        handler = new InfluxDbMetadataHandler(
+        handler = new InfluxDBMetadataHandler(
                 mockFactory,
                 new com.amazonaws.athena.connector.lambda.security.LocalKeyFactory(),
                 mock(software.amazon.awssdk.services.secretsmanager.SecretsManagerClient.class),
@@ -176,7 +176,7 @@ public class InfluxDbMetadataHandlerTest
         config.put("INFLUXDB3_AUTH_TOKEN", "test-token");
         config.put("influxdb_database", "MyDatabase");
 
-        handler = new InfluxDbMetadataHandler(
+        handler = new InfluxDBMetadataHandler(
                 mockFactory,
                 new com.amazonaws.athena.connector.lambda.security.LocalKeyFactory(),
                 mock(software.amazon.awssdk.services.secretsmanager.SecretsManagerClient.class),
@@ -253,7 +253,7 @@ public class InfluxDbMetadataHandlerTest
         assertEquals(8, handlerWithSplitCount("abc").clampedSplitCount());
     }
 
-    private InfluxDbMetadataHandler handlerWithSplitCount(final String count)
+    private InfluxDBMetadataHandler handlerWithSplitCount(final String count)
     {
         final Map<String, String> config = new HashMap<>();
         config.put("spill_bucket", "test-bucket");
@@ -263,7 +263,7 @@ public class InfluxDbMetadataHandlerTest
         if (count != null) {
             config.put("query_parallelism_count", count);
         }
-        return new InfluxDbMetadataHandler(
+        return new InfluxDBMetadataHandler(
                 mockFactory,
                 new com.amazonaws.athena.connector.lambda.security.LocalKeyFactory(),
                 mock(software.amazon.awssdk.services.secretsmanager.SecretsManagerClient.class),
@@ -276,11 +276,11 @@ public class InfluxDbMetadataHandlerTest
     @Test
     public void testToArrowType()
     {
-        assertEquals(Types.MinorType.BIGINT, InfluxDbMetadataHandler.toArrowType("BIGINT"));
-        assertEquals(Types.MinorType.FLOAT8, InfluxDbMetadataHandler.toArrowType("DOUBLE"));
-        assertEquals(Types.MinorType.BIT, InfluxDbMetadataHandler.toArrowType("BOOLEAN"));
-        assertEquals(Types.MinorType.TIMESTAMPMILLITZ, InfluxDbMetadataHandler.toArrowType("TIMESTAMP"));
-        assertEquals(Types.MinorType.VARCHAR, InfluxDbMetadataHandler.toArrowType("UNKNOWN_TYPE"));
+        assertEquals(Types.MinorType.BIGINT, InfluxDBMetadataHandler.toArrowType("BIGINT"));
+        assertEquals(Types.MinorType.FLOAT8, InfluxDBMetadataHandler.toArrowType("DOUBLE"));
+        assertEquals(Types.MinorType.BIT, InfluxDBMetadataHandler.toArrowType("BOOLEAN"));
+        assertEquals(Types.MinorType.TIMESTAMPMILLITZ, InfluxDBMetadataHandler.toArrowType("TIMESTAMP"));
+        assertEquals(Types.MinorType.VARCHAR, InfluxDBMetadataHandler.toArrowType("UNKNOWN_TYPE"));
     }
 
     @Test
@@ -303,13 +303,13 @@ public class InfluxDbMetadataHandlerTest
     {
         final Constraints empty = new Constraints(new HashMap<>(), Collections.emptyList(),
                 Collections.emptyList(), Constraints.DEFAULT_NO_LIMIT, null, null);
-        assertNull(InfluxDbMetadataHandler.extractTimeRange(empty));
+        assertNull(InfluxDBMetadataHandler.extractTimeRange(empty));
     }
 
     @Test
     public void testGetPartitionsWritesSingleUnboundedPartitionWhenNoTimeRange() throws Exception
     {
-        final InfluxDbMetadataHandler pHandler = handlerWithParallelism("true", "8");
+        final InfluxDBMetadataHandler pHandler = handlerWithParallelism("true", "8");
         final Schema partSchema = SchemaBuilder.newBuilder()
                         .addField("time_lower", Types.MinorType.BIGINT.getType())
                         .addField("time_upper", Types.MinorType.BIGINT.getType())
@@ -383,7 +383,7 @@ public class InfluxDbMetadataHandlerTest
         assertEquals(1, response.getSplits().size());
     }
 
-    private InfluxDbMetadataHandler handlerWithParallelism(final String enabled, final String count)
+    private InfluxDBMetadataHandler handlerWithParallelism(final String enabled, final String count)
     {
         final Map<String, String> config = new HashMap<>();
         config.put("spill_bucket", "test-bucket");
@@ -392,7 +392,7 @@ public class InfluxDbMetadataHandlerTest
         config.put("INFLUXDB3_AUTH_TOKEN", "test-token");
         config.put("enable_query_parallelism", enabled);
         config.put("query_parallelism_count", count);
-        return new InfluxDbMetadataHandler(
+        return new InfluxDBMetadataHandler(
                 mockFactory,
                 new LocalKeyFactory(),
                 mock(SecretsManagerClient.class),
@@ -427,8 +427,8 @@ public class InfluxDbMetadataHandlerTest
 
             final Map<String, String> args = new HashMap<>();
             args.put("schemaFunctionName", "SYSTEM.QUERY");
-            args.put(InfluxDbQueryPassthrough.DATABASE, "mydb");
-            args.put(InfluxDbQueryPassthrough.QUERY, "SELECT host, usage_idle, time FROM cpu");
+            args.put(InfluxDBQueryPassthrough.DATABASE, "mydb");
+            args.put(InfluxDBQueryPassthrough.QUERY, "SELECT host, usage_idle, time FROM cpu");
 
             final GetTableResponse response = handler.doGetQueryPassthroughSchema(allocator,
                     new GetTableRequest(IDENTITY, "queryId", "catalog", new TableName("system", "query"), args));

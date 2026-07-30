@@ -19,9 +19,9 @@
  */
 package com.amazonaws.athena.connectors.influxdb;
 
-public final class InfluxDbConstants
+public final class InfluxDBConstants
 {
-    private InfluxDbConstants()
+    private InfluxDBConstants()
     {
     }
 

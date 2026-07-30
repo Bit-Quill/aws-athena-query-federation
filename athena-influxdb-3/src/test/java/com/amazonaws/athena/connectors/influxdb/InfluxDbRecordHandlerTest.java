@@ -69,7 +69,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-public class InfluxDbRecordHandlerTest
+public class InfluxDBRecordHandlerTest
 {
     private static final ZoneId UTC = ZoneId.of("UTC");
     private static final FederatedIdentity IDENTITY = new FederatedIdentity("arn", "account",
@@ -77,20 +77,20 @@ public class InfluxDbRecordHandlerTest
 
     private BufferAllocator arrowAllocator;
     private BlockAllocator blockAllocator;
-    private InfluxDbConnectionFactory mockFactory;
+    private InfluxDBConnectionFactory mockFactory;
     private InfluxDBClient mockClient;
-    private InfluxDbRecordHandler handler;
+    private InfluxDBRecordHandler handler;
 
     @Before
     public void setUp() throws Exception
     {
         arrowAllocator = new RootAllocator();
         blockAllocator = new BlockAllocatorImpl();
-        mockFactory = mock(InfluxDbConnectionFactory.class);
+        mockFactory = mock(InfluxDBConnectionFactory.class);
         mockClient = mock(InfluxDBClient.class);
         // Run the query lambda directly against the mock client (mirrors executeWithTokenRetry).
         when(mockFactory.executeWithTokenRetry(any(), any())).thenAnswer(invocation -> {
-            final InfluxDbConnectionFactory.InfluxDbQuery<?> query = invocation.getArgument(1);
+            final InfluxDBConnectionFactory.InfluxDBQuery<?> query = invocation.getArgument(1);
             return query.run(mockClient);
         });
 
@@ -100,7 +100,7 @@ public class InfluxDbRecordHandlerTest
         config.put("INFLUXDB3_HOST_URL", "https://localhost:8086");
         config.put("INFLUXDB3_AUTH_TOKEN", "test-token");
 
-        handler = new InfluxDbRecordHandler(
+        handler = new InfluxDBRecordHandler(
                 mock(software.amazon.awssdk.services.s3.S3Client.class),
                 mock(software.amazon.awssdk.services.secretsmanager.SecretsManagerClient.class),
                 mock(software.amazon.awssdk.services.athena.AthenaClient.class),
@@ -236,8 +236,8 @@ public class InfluxDbRecordHandlerTest
 
         final Map<String, String> qpt = new HashMap<>();
         qpt.put("schemaFunctionName", "SYSTEM.QUERY");
-        qpt.put(InfluxDbQueryPassthrough.DATABASE, "mydb");
-        qpt.put(InfluxDbQueryPassthrough.QUERY, "SELECT host, usage_idle, time FROM cpu");
+        qpt.put(InfluxDBQueryPassthrough.DATABASE, "mydb");
+        qpt.put(InfluxDBQueryPassthrough.QUERY, "SELECT host, usage_idle, time FROM cpu");
         final Constraints constraints = new Constraints(new HashMap<>(), Collections.emptyList(),
                 Collections.emptyList(), Constraints.DEFAULT_NO_LIMIT, qpt, null);
         final Split split = mock(Split.class);
@@ -260,7 +260,7 @@ public class InfluxDbRecordHandlerTest
     {
         final long nanos = 1782258710000000000L;
         assertEquals(Instant.ofEpochSecond(0L, nanos).atZone(UTC),
-                InfluxDbRecordHandler.toZonedDateTime(nanos, TimeUnit.NANOSECOND));
+                InfluxDBRecordHandler.toZonedDateTime(nanos, TimeUnit.NANOSECOND));
     }
 
     @Test
@@ -268,7 +268,7 @@ public class InfluxDbRecordHandlerTest
     {
         final long millis = 1782258710000L;
         assertEquals(Instant.ofEpochMilli(millis).atZone(UTC),
-                InfluxDbRecordHandler.toZonedDateTime(millis, TimeUnit.MILLISECOND));
+                InfluxDBRecordHandler.toZonedDateTime(millis, TimeUnit.MILLISECOND));
     }
 
     /**
@@ -280,9 +280,9 @@ public class InfluxDbRecordHandlerTest
     {
         final long seconds = 1782258710L;
         final ZonedDateTime expected = Instant.ofEpochSecond(seconds).atZone(UTC);
-        assertEquals(expected, InfluxDbRecordHandler.toZonedDateTime(seconds, TimeUnit.SECOND));
-        assertEquals(expected, InfluxDbRecordHandler.toZonedDateTime(seconds * 1_000L, TimeUnit.MILLISECOND));
-        assertEquals(expected, InfluxDbRecordHandler.toZonedDateTime(seconds * 1_000_000L, TimeUnit.MICROSECOND));
-        assertEquals(expected, InfluxDbRecordHandler.toZonedDateTime(seconds * 1_000_000_000L, TimeUnit.NANOSECOND));
+        assertEquals(expected, InfluxDBRecordHandler.toZonedDateTime(seconds, TimeUnit.SECOND));
+        assertEquals(expected, InfluxDBRecordHandler.toZonedDateTime(seconds * 1_000L, TimeUnit.MILLISECOND));
+        assertEquals(expected, InfluxDBRecordHandler.toZonedDateTime(seconds * 1_000_000L, TimeUnit.MICROSECOND));
+        assertEquals(expected, InfluxDBRecordHandler.toZonedDateTime(seconds * 1_000_000_000L, TimeUnit.NANOSECOND));
     }
 }

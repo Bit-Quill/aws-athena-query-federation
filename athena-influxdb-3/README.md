@@ -44,7 +44,7 @@ InfluxDB 3 (DataFusion/IOx) exposes a **flat, primitive** column model. The conn
 
 ## Predicate & compute pushdown
 
-The connector advertises its capabilities via `doGetDataSourceCapabilities` and pushes the following down into the SQL sent to InfluxDB (see `InfluxDbQueryBuilder`):
+The connector advertises its capabilities via `doGetDataSourceCapabilities` and pushes the following down into the SQL sent to InfluxDB (see `InfluxDBQueryBuilder`):
 
 - **Filter pushdown** — equality, `IN` lists, `IS NULL`/`IS NOT NULL`, and open/closed ranges (`>`, `>=`, `<`, `<=`, `BETWEEN`), derived from the constraint summary `ValueSet`s (`buildWhereClause` → `toPredicate`).
 - **Complex expression pushdown** — `AND`/`OR`/`NOT`, comparison and arithmetic operators, `LIKE`, `IN`, `IS DISTINCT FROM`, `NULLIF`, etc., from `constraints.getExpression()` (`toExpression`). Unsupported functions are skipped (logged at `warn`), so the query still runs correctly with residual filtering done by Athena.
@@ -89,7 +89,7 @@ A **split** is Athena's unit of parallelism — each split is read by a separate
 
 ## Backpressure
 
-If InfluxDB signals throttling — a Flight `RESOURCE_EXHAUSTED`, or an HTTP `429` on the database-list call — the connector raises `FederationThrottleException` (`isThrottle` in `InfluxDbConnectionFactory`). Athena treats this as backpressure and reduces the concurrency it drives, which protects the single downstream InfluxDB instance from being overwhelmed by Lambda fan-out. Throttles are surfaced before any rows are written, so Athena can safely retry.
+If InfluxDB signals throttling — a Flight `RESOURCE_EXHAUSTED`, or an HTTP `429` on the database-list call — the connector raises `FederationThrottleException` (`isThrottle` in `InfluxDBConnectionFactory`). Athena treats this as backpressure and reduces the concurrency it drives, which protects the single downstream InfluxDB instance from being overwhelmed by Lambda fan-out. Throttles are surfaced before any rows are written, so Athena can safely retry.
 
 ## Authentication & secrets
 
@@ -133,11 +133,11 @@ Prerequisites: JDK 25, Maven, the SAM CLI, and AWS credentials for the target ac
      --parameter-overrides \
        AthenaCatalogName=athena_influxdb \
        SpillBucket=<your-spill-bucket> \
-       InfluxDbHost=https://<cluster-endpoint>:8181 \
-       InfluxDbSecretId=athena-influxdb-token \
+       InfluxDBHost=https://<cluster-endpoint>:8181 \
+       InfluxDBSecretId=athena-influxdb-token \
        VpcId=<vpc-id> \
        "SubnetIds=<subnet-1>,<subnet-2>,<subnet-3>" \
-       InfluxDbPort=8181
+       InfluxDBPort=8181
    ```
 
    For a non-VPC source (e.g., InfluxDB Cloud reachable over the internet), omit `VpcId`/`SubnetIds`.
@@ -177,7 +177,7 @@ Timestream for InfluxDB clusters live in a VPC, so the connector Lambda must be 
 
 ### Secret
 
-Create a Secrets Manager secret holding the InfluxDB token and pass its name/ARN as `InfluxDbSecretId`. The Lambda's execution role (created by the template) is granted `secretsmanager:GetSecretValue` for that secret only.
+Create a Secrets Manager secret holding the InfluxDB token and pass its name/ARN as `InfluxDBSecretId`. The Lambda's execution role (created by the template) is granted `secretsmanager:GetSecretValue` for that secret only.
 
 ## Configuration parameters
 
@@ -185,17 +185,17 @@ Create a Secrets Manager secret holding the InfluxDB token and pass its name/ARN
 |---|---|
 | `AthenaCatalogName` | Lambda function name and Athena catalog name. |
 | `SpillBucket` / `SpillPrefix` | S3 location for spilled results. |
-| `INFLUXDB3_HOST_URL` (`InfluxDbHost`) | InfluxDB 3 host URL, e.g. `https://<endpoint>:8181`. |
-| `INFLUXDB3_AUTH_TOKEN` (`InfluxDbSecretId`) | Token, or `${secret_name}` Secrets Manager reference. |
-| `INFLUXDB3_AUTH_TOKEN_KEY` (`InfluxDbTokenKey`) | Key to read from a JSON secret (default `token`). |
-| `influxdb_database` (`InfluxDbDatabase`) | Optional default database; if empty, all accessible databases are exposed. |
+| `INFLUXDB3_HOST_URL` (`InfluxDBHost`) | InfluxDB 3 host URL, e.g. `https://<endpoint>:8181`. |
+| `INFLUXDB3_AUTH_TOKEN` (`InfluxDBSecretId`) | Token, or `${secret_name}` Secrets Manager reference. |
+| `INFLUXDB3_AUTH_TOKEN_KEY` (`InfluxDBTokenKey`) | Key to read from a JSON secret (default `token`). |
+| `influxdb_database` (`InfluxDBDatabase`) | Optional default database; if empty, all accessible databases are exposed. |
 | `enable_query_parallelism` | `true` to enable time-based split parallelism (default `false`). |
 | `query_parallelism_count` | Number of time buckets/splits when parallelism is enabled (default `8`, clamped). |
 | `enable_query_passthrough` | `true` (default) to expose the `system.query` passthrough table function. |
 | `token_refresh_max_retries` | Max token-refresh retries on auth failure (default `3`). |
 | `SubnetIds` / `SecurityGroupIds` | VPC config (required for Timestream for InfluxDB). |
 | `VpcId` | If set (with `SubnetIds`), the template **creates a dedicated security group** for the Lambda in this VPC and outputs the exact cluster ingress rule to add. If empty, `SecurityGroupIds` is used as-is. |
-| `InfluxDbPort` | Cluster port (default `8181`); used to render the required ingress rule in the stack Outputs. |
+| `InfluxDBPort` | Cluster port (default `8181`); used to render the required ingress rule in the stack Outputs. |
 | `LambdaTimeout` / `LambdaMemory` | Lambda runtime limits. |
 | `DisableSpillEncryption` | Disable spill encryption (not recommended). |
 
@@ -217,7 +217,7 @@ Create a Secrets Manager secret holding the InfluxDB token and pass its name/ARN
 
 ## Running the integration tests
 
-`InfluxDbLocalIntegrationTest` runs the connector against a local **InfluxDB 3 Core** container, so it exercises the real Flight SQL read/metadata paths end-to-end. It requires a working Docker daemon; no AWS resources or `test-config.json` are needed.
+`InfluxDBLocalIntegrationTest` runs the connector against a local **InfluxDB 3 Core** container, so it exercises the real Flight SQL read/metadata paths end-to-end. It requires a working Docker daemon; no AWS resources or `test-config.json` are needed.
 
 ```bash
 # From the athena-influxdb-3 directory:

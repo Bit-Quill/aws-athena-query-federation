@@ -29,9 +29,9 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
-public class InfluxDbQueryPassthroughTest
+public class InfluxDBQueryPassthroughTest
 {
-    private final InfluxDbQueryPassthrough signature = new InfluxDbQueryPassthrough();
+    private final InfluxDBQueryPassthrough signature = new InfluxDBQueryPassthrough();
 
     @Test
     public void testSignature()
@@ -47,8 +47,8 @@ public class InfluxDbQueryPassthroughTest
     {
         final Map<String, String> args = new HashMap<>();
         args.put(QueryPassthroughSignature.SCHEMA_FUNCTION_NAME, "SYSTEM.QUERY");
-        args.put(InfluxDbQueryPassthrough.DATABASE, "mydb");
-        args.put(InfluxDbQueryPassthrough.QUERY, "SELECT * FROM cpu");
+        args.put(InfluxDBQueryPassthrough.DATABASE, "mydb");
+        args.put(InfluxDBQueryPassthrough.QUERY, "SELECT * FROM cpu");
         return args;
     }
 
@@ -76,7 +76,7 @@ public class InfluxDbQueryPassthroughTest
     public void testVerifyRejectsMissingArgument()
     {
         final Map<String, String> args = validArgs();
-        args.remove(InfluxDbQueryPassthrough.QUERY);
+        args.remove(InfluxDBQueryPassthrough.QUERY);
         try {
             signature.verify(args);
             fail("expected verify to reject missing QUERY argument");

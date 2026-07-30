@@ -48,33 +48,33 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 
-import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.PART_TIME_LOWER;
-import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.PART_TIME_UPPER;
-import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.SOURCE_TYPE;
+import static com.amazonaws.athena.connectors.influxdb.InfluxDBConstants.PART_TIME_LOWER;
+import static com.amazonaws.athena.connectors.influxdb.InfluxDBConstants.PART_TIME_UPPER;
+import static com.amazonaws.athena.connectors.influxdb.InfluxDBConstants.SOURCE_TYPE;
 
-public class InfluxDbRecordHandler
+public class InfluxDBRecordHandler
         extends
             RecordHandler
 {
-    private static final Logger logger = LoggerFactory.getLogger(InfluxDbRecordHandler.class);
+    private static final Logger logger = LoggerFactory.getLogger(InfluxDBRecordHandler.class);
     private static final ZoneId UTC = ZoneId.of("UTC");
 
-    private final InfluxDbConnectionFactory connectionFactory;
-    private final InfluxDbQueryPassthrough queryPassthrough = new InfluxDbQueryPassthrough();
+    private final InfluxDBConnectionFactory connectionFactory;
+    private final InfluxDBQueryPassthrough queryPassthrough = new InfluxDBQueryPassthrough();
 
-    public InfluxDbRecordHandler(final Map<String, String> configOptions)
+    public InfluxDBRecordHandler(final Map<String, String> configOptions)
     {
         this(S3Client.create(), SecretsManagerClient.create(), AthenaClient.create(),
-                new InfluxDbConnectionFactory(configOptions, null),
+                new InfluxDBConnectionFactory(configOptions, null),
                 configOptions);
     }
 
     @VisibleForTesting
-    protected InfluxDbRecordHandler(
+    protected InfluxDBRecordHandler(
             final S3Client s3Client,
             final SecretsManagerClient secretsManager,
             final AthenaClient athena,
-            final InfluxDbConnectionFactory connectionFactory,
+            final InfluxDBConnectionFactory connectionFactory,
             final Map<String, String> configOptions)
     {
         super(s3Client, secretsManager, athena, SOURCE_TYPE, configOptions);
@@ -90,15 +90,15 @@ public class InfluxDbRecordHandler
             throws Exception
     {
         final Schema schema = recordsRequest.getSchema();
-        final String resolvedDb;
+        final String resolvedDB;
         final String sql;
         if (recordsRequest.getConstraints().isQueryPassThrough()) {
             // Query passthrough: run the caller's native SQL verbatim against the supplied database.
             final Map<String, String> qptArgs = recordsRequest.getConstraints().getQueryPassthroughArguments();
             queryPassthrough.verify(qptArgs);
-            resolvedDb = qptArgs.get(InfluxDbQueryPassthrough.DATABASE);
-            sql = qptArgs.get(InfluxDbQueryPassthrough.QUERY);
-            logger.info("readWithConstraint: query passthrough against database={}", resolvedDb);
+            resolvedDB = qptArgs.get(InfluxDBQueryPassthrough.DATABASE);
+            sql = qptArgs.get(InfluxDBQueryPassthrough.QUERY);
+            logger.info("readWithConstraint: query passthrough against database={}", resolvedDB);
         }
         else {
             String tableName = recordsRequest.getTableName().getTableName();
@@ -110,11 +110,11 @@ public class InfluxDbRecordHandler
                 tableName = originalTableName;
             }
 
-            resolvedDb = schema.getCustomMetadata().get("resolvedDatabaseName");
+            resolvedDB = schema.getCustomMetadata().get("resolvedDatabaseName");
 
             final String timeLower = recordsRequest.getSplit().getProperty(PART_TIME_LOWER);
             final String timeUpper = recordsRequest.getSplit().getProperty(PART_TIME_UPPER);
-            sql = InfluxDbQueryBuilder.buildSql(schema, tableName, recordsRequest.getConstraints(),
+            sql = InfluxDBQueryBuilder.buildSql(schema, tableName, recordsRequest.getConstraints(),
                     timeLower, timeUpper);
             logger.info("readWithConstraint: schema={}, table={}", schemaName, tableName);
         }
@@ -129,7 +129,7 @@ public class InfluxDbRecordHandler
             isTimestamp[i] = (mt == Types.MinorType.TIMESTAMPMILLITZ || mt == Types.MinorType.DATEMILLI);
         }
 
-        connectionFactory.executeWithTokenRetry(resolvedDb, client -> {
+        connectionFactory.executeWithTokenRetry(resolvedDB, client -> {
             // queryBatches returns Arrow VectorSchemaRoots, so each timestamp column's
             // precision is known from its Arrow type rather than guessed from magnitude.
             try (Stream<VectorSchemaRoot> batches = client.queryBatches(sql)) {

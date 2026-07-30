@@ -60,7 +60,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-public class InfluxDbQueryBuilderTest
+public class InfluxDBQueryBuilderTest
 {
     private static final FederatedIdentity IDENTITY = new FederatedIdentity("arn", "account",
             Collections.emptyMap(), Collections.emptyList(), Collections.emptyMap());
@@ -95,19 +95,19 @@ public class InfluxDbQueryBuilderTest
                 new ArrowType.Timestamp(org.apache.arrow.vector.types.TimeUnit.MILLISECOND, "UTC");
 
         // The shared helper unpacks back to the original epoch millis.
-        assertEquals(millisUtc, InfluxDbQueryBuilder.constraintEpochMillis(packed, tsType));
+        assertEquals(millisUtc, InfluxDBQueryBuilder.constraintEpochMillis(packed, tsType));
 
         // constraintLiteral decodes the packed value (not the corrupted far-future year 233142).
         final String expected = "TIMESTAMP '"
                 + java.time.format.DateTimeFormatter.ISO_INSTANT.format(java.time.Instant.ofEpochMilli(millisUtc))
                 + "'";
-        assertEquals(expected, InfluxDbQueryBuilder.constraintLiteral(packed, tsType));
+        assertEquals(expected, InfluxDBQueryBuilder.constraintLiteral(packed, tsType));
 
         // toLiteral is the plain formatter: it treats the value as epoch millis directly.
         assertEquals("TIMESTAMP '"
                         + java.time.format.DateTimeFormatter.ISO_INSTANT.format(java.time.Instant.ofEpochMilli(millisUtc))
                         + "'",
-                InfluxDbQueryBuilder.toLiteral(millisUtc, tsType));
+                InfluxDBQueryBuilder.toLiteral(millisUtc, tsType));
     }
 
     @Test
@@ -118,7 +118,7 @@ public class InfluxDbQueryBuilderTest
 
         // 1-hour window (epoch millis). The per-split bound is a half-open
         // [lower, upper) predicate on "time" expressed with TIMESTAMP literals.
-        final String sql = InfluxDbQueryBuilder.buildSql(schema, "cpu", constraints,
+        final String sql = InfluxDBQueryBuilder.buildSql(schema, "cpu", constraints,
                 "1764764130000", "1764767730000");
 
         assertTrue(sql.contains("WHERE"));
@@ -133,7 +133,7 @@ public class InfluxDbQueryBuilderTest
                 Collections.emptyList(), Constraints.DEFAULT_NO_LIMIT, null, null);
 
         // Single-partition fallback: null bounds must not add a WHERE clause.
-        final String sql = InfluxDbQueryBuilder.buildSql(schema, "cpu", constraints, null, null);
+        final String sql = InfluxDBQueryBuilder.buildSql(schema, "cpu", constraints, null, null);
 
         assertEquals("SELECT \"time\", \"host\", \"usage_idle\" FROM \"cpu\"", sql);
     }
@@ -144,7 +144,7 @@ public class InfluxDbQueryBuilderTest
         final Constraints constraints = new Constraints(new HashMap<>(), Collections.emptyList(),
                 Collections.emptyList(), Constraints.DEFAULT_NO_LIMIT, null, null);
 
-        final String sql = InfluxDbQueryBuilder.buildSql(schema, "cpu", constraints);
+        final String sql = InfluxDBQueryBuilder.buildSql(schema, "cpu", constraints);
 
         assertEquals("SELECT \"time\", \"host\", \"usage_idle\" FROM \"cpu\"", sql);
     }
@@ -155,7 +155,7 @@ public class InfluxDbQueryBuilderTest
         final Constraints constraints = new Constraints(new HashMap<>(), Collections.emptyList(),
                 Collections.emptyList(), 10, null, null);
 
-        final String sql = InfluxDbQueryBuilder.buildSql(schema, "cpu", constraints);
+        final String sql = InfluxDBQueryBuilder.buildSql(schema, "cpu", constraints);
 
         assertTrue(sql.endsWith("LIMIT 10"));
     }
@@ -168,7 +168,7 @@ public class InfluxDbQueryBuilderTest
         final Constraints constraints = new Constraints(new HashMap<>(), Collections.emptyList(),
                 orderBy, 5, null, null);
 
-        final String sql = InfluxDbQueryBuilder.buildSql(schema, "cpu", constraints);
+        final String sql = InfluxDBQueryBuilder.buildSql(schema, "cpu", constraints);
 
         assertTrue(sql.contains("ORDER BY \"usage_idle\" DESC NULLS LAST"));
         assertTrue(sql.endsWith("LIMIT 5"));
@@ -184,7 +184,7 @@ public class InfluxDbQueryBuilderTest
         final Constraints constraints = new Constraints(summary, Collections.emptyList(),
                 Collections.emptyList(), Constraints.DEFAULT_NO_LIMIT, null, null);
 
-        final String sql = InfluxDbQueryBuilder.buildSql(schema, "cpu", constraints);
+        final String sql = InfluxDBQueryBuilder.buildSql(schema, "cpu", constraints);
 
         assertTrue(sql.contains("WHERE"));
         assertTrue(sql.contains("\"host\" = 'server1'"));
@@ -201,7 +201,7 @@ public class InfluxDbQueryBuilderTest
         final Constraints constraints = new Constraints(summary, Collections.emptyList(),
                 Collections.emptyList(), Constraints.DEFAULT_NO_LIMIT, null, null);
 
-        final String sql = InfluxDbQueryBuilder.buildSql(schema, "cpu", constraints);
+        final String sql = InfluxDBQueryBuilder.buildSql(schema, "cpu", constraints);
 
         assertTrue(sql.contains("WHERE"));
         assertTrue(sql.contains("\"usage_idle\" > 50.0"));
@@ -219,7 +219,7 @@ public class InfluxDbQueryBuilderTest
         final Constraints constraints = new Constraints(summary, Collections.emptyList(),
                 Collections.emptyList(), Constraints.DEFAULT_NO_LIMIT, null, null);
 
-        final String sql = InfluxDbQueryBuilder.buildSql(schema, "cpu", constraints);
+        final String sql = InfluxDBQueryBuilder.buildSql(schema, "cpu", constraints);
 
         assertTrue(sql.contains("\"host\" IN ('server1', 'server2', 'server3')"));
     }
@@ -233,7 +233,7 @@ public class InfluxDbQueryBuilderTest
         final Constraints constraints = new Constraints(summary, Collections.emptyList(),
                 Collections.emptyList(), Constraints.DEFAULT_NO_LIMIT, null, null);
 
-        final String sql = InfluxDbQueryBuilder.buildSql(schema, "cpu", constraints);
+        final String sql = InfluxDBQueryBuilder.buildSql(schema, "cpu", constraints);
 
         assertTrue(sql.contains("\"host\" IS NULL"));
     }
@@ -250,7 +250,7 @@ public class InfluxDbQueryBuilderTest
         final Constraints constraints = new Constraints(summary, Collections.emptyList(),
                 Collections.emptyList(), Constraints.DEFAULT_NO_LIMIT, null, null);
 
-        final String sql = InfluxDbQueryBuilder.buildSql(schema, "cpu", constraints);
+        final String sql = InfluxDBQueryBuilder.buildSql(schema, "cpu", constraints);
 
         assertTrue(sql.contains("\"usage_idle\" >= 10.0"));
         assertTrue(sql.contains("\"usage_idle\" <= 90.0"));
@@ -269,7 +269,7 @@ public class InfluxDbQueryBuilderTest
         final Constraints constraints = new Constraints(summary, Collections.emptyList(),
                 orderBy, 10, null, null);
 
-        final String sql = InfluxDbQueryBuilder.buildSql(schema, "cpu", constraints);
+        final String sql = InfluxDBQueryBuilder.buildSql(schema, "cpu", constraints);
 
         assertTrue(sql.contains("WHERE"));
         assertTrue(sql.contains("\"host\" = 'server1'"));
@@ -280,22 +280,22 @@ public class InfluxDbQueryBuilderTest
     @Test
     public void testToLiteralTypes()
     {
-        assertEquals("'hello'", InfluxDbQueryBuilder.toLiteral("hello", new ArrowType.Utf8()));
-        assertEquals("'it''s'", InfluxDbQueryBuilder.toLiteral("it's", new ArrowType.Utf8()));
-        assertEquals("42", InfluxDbQueryBuilder.toLiteral(42L, new ArrowType.Int(64, true)));
-        assertEquals("3.14", InfluxDbQueryBuilder.toLiteral(3.14, new ArrowType.FloatingPoint(
+        assertEquals("'hello'", InfluxDBQueryBuilder.toLiteral("hello", new ArrowType.Utf8()));
+        assertEquals("'it''s'", InfluxDBQueryBuilder.toLiteral("it's", new ArrowType.Utf8()));
+        assertEquals("42", InfluxDBQueryBuilder.toLiteral(42L, new ArrowType.Int(64, true)));
+        assertEquals("3.14", InfluxDBQueryBuilder.toLiteral(3.14, new ArrowType.FloatingPoint(
                 org.apache.arrow.vector.types.FloatingPointPrecision.DOUBLE)));
-        assertEquals("true", InfluxDbQueryBuilder.toLiteral(true, new ArrowType.Bool()));
-        assertEquals("NULL", InfluxDbQueryBuilder.toLiteral(null, new ArrowType.Utf8()));
-        assertEquals("TIMESTAMP '2026-06-23T23:51:50Z'", InfluxDbQueryBuilder.toLiteral(1782258710000l,
+        assertEquals("true", InfluxDBQueryBuilder.toLiteral(true, new ArrowType.Bool()));
+        assertEquals("NULL", InfluxDBQueryBuilder.toLiteral(null, new ArrowType.Utf8()));
+        assertEquals("TIMESTAMP '2026-06-23T23:51:50Z'", InfluxDBQueryBuilder.toLiteral(1782258710000l,
                 new ArrowType.Timestamp(org.apache.arrow.vector.types.TimeUnit.MILLISECOND, "UTC")));
     }
 
     @Test
     public void testQuoteEscaping()
     {
-        assertEquals("\"normal\"", InfluxDbQueryBuilder.quote("normal"));
-        assertEquals("\"has\"\"quote\"", InfluxDbQueryBuilder.quote("has\"quote"));
+        assertEquals("\"normal\"", InfluxDBQueryBuilder.quote("normal"));
+        assertEquals("\"has\"\"quote\"", InfluxDBQueryBuilder.quote("has\"quote"));
     }
 
     @Test
@@ -310,10 +310,10 @@ public class InfluxDbQueryBuilderTest
 
         final com.influxdb.v3.client.InfluxDBClient mockClient = mock(
                 com.influxdb.v3.client.InfluxDBClient.class);
-        final InfluxDbConnectionFactory mockFactory = mock(InfluxDbConnectionFactory.class);
+        final InfluxDBConnectionFactory mockFactory = mock(InfluxDBConnectionFactory.class);
         when(mockFactory.getClient(anyString())).thenReturn(mockClient);
 
-        final InfluxDbMetadataHandler handler = new InfluxDbMetadataHandler(
+        final InfluxDBMetadataHandler handler = new InfluxDBMetadataHandler(
                 mockFactory,
                 new com.amazonaws.athena.connector.lambda.security.LocalKeyFactory(),
                 mock(software.amazon.awssdk.services.secretsmanager.SecretsManagerClient.class),
@@ -368,7 +368,7 @@ public class InfluxDbQueryBuilderTest
     {
         final Constraints constraints = new Constraints(new HashMap<>(), Arrays.asList(expr),
                 Collections.emptyList(), Constraints.DEFAULT_NO_LIMIT, null, null);
-        return InfluxDbQueryBuilder.buildSql(schema, "cpu", constraints);
+        return InfluxDBQueryBuilder.buildSql(schema, "cpu", constraints);
     }
 
     @Test

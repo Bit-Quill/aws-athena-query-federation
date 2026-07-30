@@ -46,13 +46,13 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 
-import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.DEFAULT_TOKEN_KEY;
-import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.DEFAULT_TOKEN_REFRESH_MAX_RETRIES;
-import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.ENV_INFLUXDB_HOST;
-import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.ENV_INFLUXDB_TOKEN;
-import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.ENV_INFLUXDB_TOKEN_KEY;
-import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.MAX_EXCEPTION_CAUSE_SEARCH_DEPTH;
-import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.TOKEN_REFRESH_MAX_RETRIES;
+import static com.amazonaws.athena.connectors.influxdb.InfluxDBConstants.DEFAULT_TOKEN_KEY;
+import static com.amazonaws.athena.connectors.influxdb.InfluxDBConstants.DEFAULT_TOKEN_REFRESH_MAX_RETRIES;
+import static com.amazonaws.athena.connectors.influxdb.InfluxDBConstants.ENV_INFLUXDB_HOST;
+import static com.amazonaws.athena.connectors.influxdb.InfluxDBConstants.ENV_INFLUXDB_TOKEN;
+import static com.amazonaws.athena.connectors.influxdb.InfluxDBConstants.ENV_INFLUXDB_TOKEN_KEY;
+import static com.amazonaws.athena.connectors.influxdb.InfluxDBConstants.MAX_EXCEPTION_CAUSE_SEARCH_DEPTH;
+import static com.amazonaws.athena.connectors.influxdb.InfluxDBConstants.TOKEN_REFRESH_MAX_RETRIES;
 /**
  * Creates InfluxDB client connections, resolving the auth token from Secrets Manager.
  *
@@ -61,9 +61,9 @@ import static com.amazonaws.athena.connectors.influxdb.InfluxDbConstants.TOKEN_R
  *
  * The env var influxdb_token can be either a literal token or a Secrets Manager reference using the SDK's ${secret_name} pattern.
  */
-public class InfluxDbConnectionFactory
+public class InfluxDBConnectionFactory
 {
-    private static final Logger logger = LoggerFactory.getLogger(InfluxDbConnectionFactory.class);
+    private static final Logger logger = LoggerFactory.getLogger(InfluxDBConnectionFactory.class);
     private static final Gson GSON = new Gson();
     private static final HttpClient HTTP = HttpClient.newHttpClient();
 
@@ -73,7 +73,7 @@ public class InfluxDbConnectionFactory
     private final int maxTokenRefreshRetries;
     private FederationRequestHandler handler;
 
-    public InfluxDbConnectionFactory(final Map<String, String> configOptions, final FederationRequestHandler handler)
+    public InfluxDBConnectionFactory(final Map<String, String> configOptions, final FederationRequestHandler handler)
     {
         this.configOptions = configOptions;
         this.handler = handler;
@@ -135,7 +135,7 @@ public class InfluxDbConnectionFactory
      * stream consumption, not when {@code query()} is called.
      */
     @FunctionalInterface
-    public interface InfluxDbQuery<T>
+    public interface InfluxDBQuery<T>
     {
         T run(InfluxDBClient client) throws Exception;
     }
@@ -149,7 +149,7 @@ public class InfluxDbConnectionFactory
      * Auth errors occur at Flight stream initiation, before any rows are emitted, so retrying a query that streams into
      * a spiller does not risk duplicate output.
      */
-    public <T> T executeWithTokenRetry(final String database, final InfluxDbQuery<T> query) throws Exception
+    public <T> T executeWithTokenRetry(final String database, final InfluxDBQuery<T> query) throws Exception
     {
         int refreshes = 0;
         while (true) {
@@ -254,11 +254,11 @@ public class InfluxDbConnectionFactory
     /**
      * Resolves a lowercased table name back to the original case by querying information_schema given an already-resolved database.
      */
-    public String resolveTableName(final String resolvedDb, final TableName tableName) throws Exception
+    public String resolveTableName(final String resolvedDB, final TableName tableName) throws Exception
     {
         final Map<String, Object> parameters = Map.of("table_name", tableName.getTableName().toLowerCase(Locale.ROOT));
         final String sql = "SELECT table_name FROM information_schema.tables WHERE table_schema = 'iox' AND lower(table_name) = $table_name";
-        return executeWithTokenRetry(resolvedDb, client -> {
+        return executeWithTokenRetry(resolvedDB, client -> {
             try (Stream<Object[]> stream = client.query(sql, parameters)) {
                 return stream.map(row -> String.valueOf(row[0]))
                         .findFirst()

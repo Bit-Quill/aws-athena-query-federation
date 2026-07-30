@@ -59,14 +59,14 @@ import static org.junit.Assert.assertTrue;
 /**
  * Integration test that runs against a local InfluxDB 3 Core container.
  */
-public class InfluxDbLocalIntegrationTest
+public class InfluxDBLocalIntegrationTest
 {
     private static final FederatedIdentity IDENTITY = new FederatedIdentity("arn", "account",
             Collections.<String, String>emptyMap(), Collections.<String>emptyList(),
             Collections.<String, String>emptyMap());
 
     private BlockAllocator allocator;
-    private InfluxDbMetadataHandler handler;
+    private InfluxDBMetadataHandler handler;
     private static Map<String, String> configOptions;
     @SuppressWarnings("rawtypes")
     private static GenericContainer influxDBV3Container;
@@ -164,7 +164,7 @@ public class InfluxDbLocalIntegrationTest
     public void setUpHandler()
     {
         allocator = new BlockAllocatorImpl();
-        handler = new InfluxDbMetadataHandler(configOptions);
+        handler = new InfluxDBMetadataHandler(configOptions);
     }
 
     @After
@@ -205,7 +205,7 @@ public class InfluxDbLocalIntegrationTest
         newConfigOptions.put("INFLUXDB3_AUTH_TOKEN", influxDBV3Token);
         newConfigOptions.put("spill_bucket", "test-bucket");
         newConfigOptions.put("spill_prefix", "test-prefix");
-        handler = new InfluxDbMetadataHandler(newConfigOptions);
+        handler = new InfluxDBMetadataHandler(newConfigOptions);
 
         final String newDatabase = "extratestdb";
         final ExecResult databaseCreationResult = influxDBV3Container.execInContainer(
