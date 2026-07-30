@@ -81,12 +81,6 @@ A **split** is Athena's unit of parallelism — each split is read by a separate
 
 **Enable it** for large, time-ranged scans that return many rows (or that approach a single Lambda's memory/time limits). Leave it **off** (the default) otherwise. Tune `query_parallelism_count` (clamped to a safe range) to balance throughput against backend load.
 
-## Record reads (field extraction)
-
-`readWithConstraint` reads results via `queryBatches`, which returns Arrow `VectorSchemaRoot` batches (columnar). The connector reuses the InfluxDB client's `VectorSchemaRootConverter` to extract values and writes them to the Athena `Block` via `block.offerValue`.
-
-**On the field-extractor framework:** the SDK's `GeneratedRowWriter`/`Extractor` framework is designed for **row-oriented** sources (e.g., JDBC `ResultSet`s) where per-field typed extractors avoid boxing. InfluxDB 3 results are **already Arrow columnar**, and the Flight client hands back `VectorSchemaRoot`s whose types are known from the Arrow schema. Using those types directly is simpler and avoids an extra row-materialization layer. Timestamps are the one case that needs care: rather than guess precision from a value's magnitude, the connector reads each timestamp column's Arrow `TimeUnit` and converts to a UTC `ZonedDateTime` deterministically.
-
 ## Backpressure
 
 If InfluxDB signals throttling — a Flight `RESOURCE_EXHAUSTED`, or an HTTP `429` on the database-list call — the connector raises `FederationThrottleException` (`isThrottle` in `InfluxDBConnectionFactory`). Athena treats this as backpressure and reduces the concurrency it drives, which protects the single downstream InfluxDB instance from being overwhelmed by Lambda fan-out. Throttles are surfaced before any rows are written, so Athena can safely retry.
