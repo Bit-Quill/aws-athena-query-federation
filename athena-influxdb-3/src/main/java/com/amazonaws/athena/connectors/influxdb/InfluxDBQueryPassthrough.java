@@ -25,6 +25,8 @@ import org.slf4j.LoggerFactory;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Query passthrough signature for InfluxDB 3. Exposed to Athena as the table function
@@ -43,6 +45,7 @@ public class InfluxDBQueryPassthrough implements QueryPassthroughSignature
     public static final String SCHEMA_NAME = "system";
     public static final String NAME = "query";
     public static final List<String> ARGUMENTS = Arrays.asList(DATABASE, QUERY);
+    private static final Pattern VALID_DATABASE_NAME = Pattern.compile("^[A-Za-z0-9][A-Za-z0-9/_-]{0,63}$");
 
     private static final Logger LOGGER = LoggerFactory.getLogger(InfluxDBQueryPassthrough.class);
 
@@ -68,5 +71,17 @@ public class InfluxDBQueryPassthrough implements QueryPassthroughSignature
     public Logger getLogger()
     {
         return LOGGER;
+    }
+
+    @Override
+    public void customConnectorVerifications(Map<String, String> engineQptArguments)
+    {
+        String databaseName = engineQptArguments.get(DATABASE);
+        if (databaseName == null || !VALID_DATABASE_NAME.matcher(databaseName).matches()) {
+            throw new IllegalArgumentException(
+                "Invalid InfluxDB v3 database name '" + databaseName + "'. Names must "
+                + "be a maximum of 64 characters, start with a letter or number and "
+                + "contain only letters, numbers, '_', '-', or '/'.");
+        }
     }
 }
