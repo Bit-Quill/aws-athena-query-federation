@@ -252,7 +252,9 @@ public class InfluxDBConnectionFactory
     }
 
     /**
-     * Resolves a lowercased table name back to the original case by querying information_schema given an already-resolved database.
+     * Resolves a lowercased table name back to the original case by querying information_schema given an
+     * already-resolved database. Throws if no matching table exists — there is no correct-case name to fall back to,
+     * and proceeding with the lowercased name would only defer a guaranteed failure to the read stage.
      */
     public String resolveTableName(final String resolvedDB, final TableName tableName) throws Exception
     {
@@ -262,7 +264,8 @@ public class InfluxDBConnectionFactory
             try (Stream<Object[]> stream = client.query(sql, parameters)) {
                 return stream.map(row -> String.valueOf(row[0]))
                         .findFirst()
-                        .orElse(tableName.getTableName());
+                        .orElseThrow(() -> new IllegalArgumentException(
+                                "Table not found in database '" + resolvedDB + "': " + tableName.getTableName()));
             }
         });
     }

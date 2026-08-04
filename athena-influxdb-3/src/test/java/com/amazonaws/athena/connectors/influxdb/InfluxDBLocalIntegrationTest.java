@@ -55,6 +55,7 @@ import java.util.stream.Stream;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 /**
  * Integration test that runs against a local InfluxDB 3 Core container.
@@ -273,5 +274,27 @@ public class InfluxDBLocalIntegrationTest
 
         assertTrue("Should have 'usage_idle' column", columns.containsKey("usage_idle"));
         assertEquals("usage_idle should be FLOAT8", Types.MinorType.FLOAT8, columns.get("usage_idle"));
+    }
+
+    /**
+     * A table that does not exist must fail fast with a clear error, rather than silently falling back
+     * to the requested (lowercased) name and deferring a confusing failure to the read stage.
+     */
+    @Test
+    public void testGetTableNonexistentTableThrows()
+    {
+        try {
+            handler.doGetTable(
+                    allocator,
+                    new GetTableRequest(IDENTITY, "queryId", "catalog",
+                            new TableName("testdb", "does_not_exist"), Collections.emptyMap()));
+            fail("Expected doGetTable to throw for a nonexistent table");
+        }
+        catch (final Exception expected) {
+            assertTrue("Expected an IllegalArgumentException, was: " + expected,
+                    expected instanceof IllegalArgumentException);
+            assertTrue("Message should name the missing table, was: " + expected.getMessage(),
+                    expected.getMessage() != null && expected.getMessage().contains("does_not_exist"));
+        }
     }
 }
