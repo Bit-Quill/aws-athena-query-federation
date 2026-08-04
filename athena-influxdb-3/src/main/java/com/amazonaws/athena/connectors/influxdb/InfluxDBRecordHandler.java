@@ -44,6 +44,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
@@ -138,28 +139,37 @@ public class InfluxDBRecordHandler
                     return;
                 }
                 final List<FieldVector> vectors = root.getFieldVectors();
+                // Resolve each result column to its position by name.
+                final Map<String, Integer> arrowIndexByName = new HashMap<>();
+                for (int i = 0; i < vectors.size(); i++) {
+                    arrowIndexByName.put(vectors.get(i).getField().getName(), i);
+                }
                 final int rowCount = root.getRowCount();
-                for (int r = 0; r < rowCount; r++) {
-                    final int rowIdx = r;
+                for (int i = 0; i < rowCount; i++) {
+                    final int rowIdx = i;
                     // Reuse the client's converter for value extraction (handles
-                    // dictionary-encoded tags, Utf8, numerics, booleans).
+                    // dictionary-encoded tags, Utf8, numerics, booleans). Values are returned in
+                    // Arrow column order, so they are indexed by the resolved Arrow position.
                     final Object[] values =
                             VectorSchemaRootConverter.INSTANCE.getArrayObjectFromVectorSchemaRoot(root, rowIdx);
                     spiller.writeRows((final Block block, final int rowNum) -> {
                         boolean matched = true;
-                        for (int i = 0; i < fields.size(); i++) {
-                            Object val = values[i];
-                            if (val != null && isTimestamp[i]) {
+                        for (int j = 0; j < fields.size(); j++) {
+                            final String fieldName = fields.get(j).getName();
+                            final Integer col = arrowIndexByName.get(fieldName);
+                            // A schema field absent from the result maps to null.
+                            Object val = (col != null) ? values[col] : null;
+                            if (val != null && isTimestamp[j]) {
                                 // BlockUtils.setValue for TIMESTAMPMILLITZ expects a ZonedDateTime.
                                 // Convert using the column's actual Arrow time unit.
-                                final FieldVector vector = vectors.get(i);
+                                final FieldVector vector = vectors.get(col);
                                 if (vector.getField().getType() instanceof ArrowType.Timestamp) {
                                     final TimeUnit unit =
                                             ((ArrowType.Timestamp) vector.getField().getType()).getUnit();
                                     val = toZonedDateTime(((TimeStampVector) vector).get(rowIdx), unit);
                                 }
                             }
-                            matched &= block.offerValue(fields.get(i).getName(), rowNum, val);
+                            matched &= block.offerValue(fieldName, rowNum, val);
                         }
                         return matched ? 1 : 0;
                     });

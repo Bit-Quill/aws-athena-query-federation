@@ -154,6 +154,38 @@ public class InfluxDBRecordHandlerTest
         return new VectorSchemaRoot(Arrays.asList(host, usageIdle, time));
     }
 
+    /**
+     * Builds a 2-row Arrow batch whose column order (time, host, usage_idle) differs from the
+     * projection schema's field order (host, usage_idle, time). Values are the same as
+     * {@link #buildBatch()} so a correct name-based mapping produces identical results.
+     */
+    private VectorSchemaRoot buildReorderedBatch()
+    {
+        final Field timeField = new Field("time",
+                new FieldType(true, new ArrowType.Timestamp(TimeUnit.MILLISECOND, "UTC"), null), null);
+        final TimeStampMilliTZVector time = new TimeStampMilliTZVector(timeField, arrowAllocator);
+        final VarCharVector host = new VarCharVector("host", arrowAllocator);
+        final Float8Vector usageIdle = new Float8Vector("usage_idle", arrowAllocator);
+
+        time.allocateNew(2);
+        host.allocateNew(2);
+        usageIdle.allocateNew(2);
+
+        time.set(0, 1764764130000L);
+        time.set(1, 1764764131000L);
+        host.set(0, new Text("server01"));
+        host.set(1, new Text("server02"));
+        usageIdle.set(0, 95.0);
+        usageIdle.set(1, 42.5);
+
+        time.setValueCount(2);
+        host.setValueCount(2);
+        usageIdle.setValueCount(2);
+
+        // Column order intentionally different from the schema order.
+        return new VectorSchemaRoot(Arrays.asList(time, host, usageIdle));
+    }
+
     private ReadRecordsRequest readRequest(final Schema schema)
     {
         final Split split = mock(Split.class);
@@ -253,6 +285,40 @@ public class InfluxDBRecordHandlerTest
         // Runs the passthrough QUERY verbatim against the DATABASE argument.
         handler.readWithConstraint(spiller, request, checker);
         assertEquals(2, rowsWritten.get());
+    }
+
+    @Test
+    public void testReadWithConstraintMapsColumnsByNameWhenResultOrderDiffers() throws Exception
+    {
+        final Schema schema = projectionSchema();
+        // Arrow result columns are (time, host, usage_idle); schema is (host, usage_idle, time).
+        final VectorSchemaRoot root = buildReorderedBatch();
+        when(mockClient.queryBatches(anyString())).thenReturn(Stream.of(root).onClose(root::close));
+
+        final QueryStatusChecker checker = mock(QueryStatusChecker.class);
+        when(checker.isQueryRunning()).thenReturn(true);
+
+        final Block block = blockAllocator.createBlock(schema);
+        block.constrain(ConstraintEvaluator.emptyEvaluator());
+        final AtomicInteger rowsWritten = new AtomicInteger();
+        final BlockSpiller spiller = spillerWritingTo(block, rowsWritten);
+
+        handler.readWithConstraint(spiller, readRequest(schema), checker);
+
+        assertEquals(2, rowsWritten.get());
+        // Despite the differing column order, each value lands in the correct column by name, not by
+        // position. Under the old positional mapping the timestamp (Arrow col 0) would have been
+        // written into "host" and the host string into "usage_idle".
+        final org.apache.arrow.vector.complex.reader.FieldReader hostReader = block.getFieldReader("host");
+        final org.apache.arrow.vector.complex.reader.FieldReader usageReader = block.getFieldReader("usage_idle");
+        hostReader.setPosition(0);
+        usageReader.setPosition(0);
+        assertEquals("server01", hostReader.readText().toString());
+        assertEquals(95.0, usageReader.readDouble(), 0.0001);
+        hostReader.setPosition(1);
+        usageReader.setPosition(1);
+        assertEquals("server02", hostReader.readText().toString());
+        assertEquals(42.5, usageReader.readDouble(), 0.0001);
     }
 
     @Test
