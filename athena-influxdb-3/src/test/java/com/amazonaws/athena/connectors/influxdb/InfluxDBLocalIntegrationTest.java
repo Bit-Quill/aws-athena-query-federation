@@ -19,20 +19,36 @@
  */
 package com.amazonaws.athena.connectors.influxdb;
 
+import com.amazonaws.athena.connector.lambda.QueryStatusChecker;
+import com.amazonaws.athena.connector.lambda.data.Block;
 import com.amazonaws.athena.connector.lambda.data.BlockAllocator;
 import com.amazonaws.athena.connector.lambda.data.BlockAllocatorImpl;
+import com.amazonaws.athena.connector.lambda.data.BlockSpiller;
+import com.amazonaws.athena.connector.lambda.data.BlockWriter;
+import com.amazonaws.athena.connector.lambda.data.SchemaBuilder;
+import com.amazonaws.athena.connector.lambda.domain.Split;
 import com.amazonaws.athena.connector.lambda.domain.TableName;
+import com.amazonaws.athena.connector.lambda.domain.predicate.ConstraintEvaluator;
+import com.amazonaws.athena.connector.lambda.domain.predicate.Constraints;
+import com.amazonaws.athena.connector.lambda.domain.predicate.Range;
+import com.amazonaws.athena.connector.lambda.domain.predicate.SortedRangeSet;
+import com.amazonaws.athena.connector.lambda.domain.predicate.ValueSet;
 import com.amazonaws.athena.connector.lambda.metadata.GetTableRequest;
 import com.amazonaws.athena.connector.lambda.metadata.GetTableResponse;
 import com.amazonaws.athena.connector.lambda.metadata.ListSchemasRequest;
 import com.amazonaws.athena.connector.lambda.metadata.ListSchemasResponse;
 import com.amazonaws.athena.connector.lambda.metadata.ListTablesRequest;
 import com.amazonaws.athena.connector.lambda.metadata.ListTablesResponse;
+import com.amazonaws.athena.connector.lambda.records.ReadRecordsRequest;
 import com.amazonaws.athena.connector.lambda.security.FederatedIdentity;
 import com.influxdb.v3.client.InfluxDBClient;
 import com.influxdb.v3.client.Point;
+import org.apache.arrow.vector.complex.reader.FieldReader;
+import org.apache.arrow.vector.types.TimeUnit;
 import org.apache.arrow.vector.types.Types;
+import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
+import org.apache.arrow.vector.types.pojo.Schema;
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Before;
@@ -44,10 +60,12 @@ import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.utility.DockerImageName;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -56,6 +74,11 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * Integration test that runs against a local InfluxDB 3 Core container.
@@ -68,6 +91,7 @@ public class InfluxDBLocalIntegrationTest
 
     private BlockAllocator allocator;
     private InfluxDBMetadataHandler handler;
+    private InfluxDBRecordHandler recordHandler;
     private static Map<String, String> configOptions;
     @SuppressWarnings("rawtypes")
     private static GenericContainer influxDBV3Container;
@@ -141,24 +165,35 @@ public class InfluxDBLocalIntegrationTest
                             .setTag("host", "server1")
                             .setField("usage_idle", 95.0)
                             .setTimestamp(now),
+                    // Second cpu host so predicate pushdown has something to filter out.
+                    Point.measurement("cpu")
+                            .setTag("host", "server2")
+                            .setField("usage_idle", 10.0)
+                            .setTimestamp(now),
                     Point.measurement("mem")
                             .setTag("host", "server1")
                             .setField("used_percent", 42.0)
+                            .setTimestamp(now),
+                    // Mixed-case measurement to exercise case-sensitivity resolution. InfluxDB
+                    // measurement names are case-sensitive; Athena will request it lowercased.
+                    Point.measurement("CpuStats")
+                            .setTag("host", "server9")
+                            .setField("load", 1.5)
                             .setTimestamp(now)));
 
-            // InfluxDB 3 buffers writes briefly; poll until cpu/mem are queryable.
+            // InfluxDB 3 buffers writes briefly; poll until the seeded tables are queryable.
             final String probe = "SELECT table_name FROM information_schema.tables "
-                    + "WHERE table_schema = 'iox' AND table_name IN ('cpu', 'mem')";
+                    + "WHERE table_schema = 'iox' AND table_name IN ('cpu', 'mem', 'CpuStats')";
             for (int attempt = 0; attempt < 20; attempt++) {
                 try (Stream<Object[]> rows = writeClient.query(probe)) {
-                    if (rows.count() >= 2) {
+                    if (rows.count() >= 3) {
                         return;
                     }
                 }
+                Thread.sleep(250);
             }
-            Thread.sleep(250);
         }
-        throw new RuntimeException("Seeded cpu/mem tables did not become queryable in time");
+        throw new RuntimeException("Seeded tables did not become queryable in time");
     }
 
     @Before
@@ -166,6 +201,14 @@ public class InfluxDBLocalIntegrationTest
     {
         allocator = new BlockAllocatorImpl();
         handler = new InfluxDBMetadataHandler(configOptions);
+        // Real connection factory (hits the container); AWS clients are mocked since reads here are
+        // small and stay in-memory (no S3 spill).
+        recordHandler = new InfluxDBRecordHandler(
+                mock(software.amazon.awssdk.services.s3.S3Client.class),
+                mock(software.amazon.awssdk.services.secretsmanager.SecretsManagerClient.class),
+                mock(software.amazon.awssdk.services.athena.AthenaClient.class),
+                new InfluxDBConnectionFactory(configOptions, null),
+                configOptions);
     }
 
     @After
@@ -296,5 +339,159 @@ public class InfluxDBLocalIntegrationTest
             assertTrue("Message should name the missing table, was: " + expected.getMessage(),
                     expected.getMessage() != null && expected.getMessage().contains("does_not_exist"));
         }
+    }
+
+    /** Mock spiller that runs the connector's RowWriter against a real Block so reads are captured. */
+    private BlockSpiller spillerWritingTo(final Block block, final AtomicInteger rowsWritten)
+    {
+        final BlockSpiller spiller = mock(BlockSpiller.class);
+        doAnswer(invocation -> {
+            final BlockWriter.RowWriter writer = invocation.getArgument(0);
+            final int written = writer.writeRows(block, rowsWritten.get());
+            rowsWritten.addAndGet(written);
+            return written;
+        }).when(spiller).writeRows(any());
+        return spiller;
+    }
+
+    private QueryStatusChecker runningChecker()
+    {
+        final QueryStatusChecker checker = mock(QueryStatusChecker.class);
+        when(checker.isQueryRunning()).thenReturn(true);
+        return checker;
+    }
+
+    private Split emptySplit()
+    {
+        final Split split = mock(Split.class);
+        when(split.getProperty(anyString())).thenReturn(null);
+        return split;
+    }
+
+    private Constraints noConstraints()
+    {
+        return new Constraints(new HashMap<>(), Collections.emptyList(), Collections.emptyList(),
+                Constraints.DEFAULT_NO_LIMIT, null, null);
+    }
+
+    /** Reads the "host" tag column back out of a populated block. */
+    private List<String> readHosts(final Block block, final int rowCount)
+    {
+        final List<String> hosts = new ArrayList<>();
+        final FieldReader reader = block.getFieldReader("host");
+        for (int i = 0; i < rowCount; i++) {
+            reader.setPosition(i);
+            hosts.add(reader.readText() == null ? null : reader.readText().toString());
+        }
+        return hosts;
+    }
+
+    /** Reads a table end-to-end through the RecordHandler, returning the host values written. */
+    private List<String> readHostsFor(final TableName tableName, final Schema schema, final Constraints constraints)
+            throws Exception
+    {
+        final ReadRecordsRequest request = new ReadRecordsRequest(IDENTITY, "catalog", "queryId",
+                tableName, schema, emptySplit(), constraints, 100_000, 100_000);
+        final Block block = allocator.createBlock(schema);
+        block.constrain(ConstraintEvaluator.emptyEvaluator());
+        final AtomicInteger rowsWritten = new AtomicInteger();
+        recordHandler.readWithConstraint(spillerWritingTo(block, rowsWritten), request, runningChecker());
+        return readHosts(block, rowsWritten.get());
+    }
+
+    @Test
+    public void testEndToEndQueryPassthrough() throws Exception
+    {
+        final Schema schema = new SchemaBuilder()
+                .addField("host", Types.MinorType.VARCHAR.getType())
+                .addField("usage_idle", Types.MinorType.FLOAT8.getType())
+                .addField("time", new ArrowType.Timestamp(TimeUnit.MILLISECOND, "UTC"))
+                .build();
+
+        final Map<String, String> qpt = new HashMap<>();
+        qpt.put("schemaFunctionName", "SYSTEM.QUERY");
+        qpt.put(InfluxDBQueryPassthrough.DATABASE, database);
+        qpt.put(InfluxDBQueryPassthrough.QUERY, "SELECT host, usage_idle, time FROM cpu WHERE host = 'server1'");
+        final Constraints constraints = new Constraints(new HashMap<>(), Collections.emptyList(),
+                Collections.emptyList(), Constraints.DEFAULT_NO_LIMIT, qpt, null);
+
+        final List<String> hosts = readHostsFor(new TableName("system", "query"), schema, constraints);
+
+        // The native passthrough query runs verbatim and returns only the matching server1 row.
+        assertEquals(Collections.singletonList("server1"), hosts);
+    }
+
+    @Test
+    public void testEndToEndCaseSensitivityResolution() throws Exception
+    {
+        // Athena lowercases identifiers, so the mixed-case measurement "CpuStats" arrives as "cpustats".
+        final GetTableResponse tableResponse = handler.doGetTable(
+                allocator,
+                new GetTableRequest(IDENTITY, "queryId", "catalog",
+                        new TableName(database, "cpustats"), Collections.emptyMap()));
+
+        // resolveTableName must recover the original case for the (case-sensitive) data read.
+        assertEquals("CpuStats",
+                tableResponse.getSchema().getCustomMetadata().get("caseSensitiveTableName"));
+
+        // End-to-end: the RecordHandler must query the correctly-cased measurement and return its row.
+        final List<String> hosts = readHostsFor(new TableName(database, "cpustats"),
+                tableResponse.getSchema(), noConstraints());
+        assertEquals(Collections.singletonList("server9"), hosts);
+    }
+
+    @Test
+    public void testPredicatePushdownFiltersServerSide() throws Exception
+    {
+        final GetTableResponse tableResponse = handler.doGetTable(
+                allocator,
+                new GetTableRequest(IDENTITY, "queryId", "catalog",
+                        new TableName(database, "cpu"), Collections.emptyMap()));
+
+        // Push an equality predicate on the host tag. Empty ConstraintEvaluator on the block means no
+        // client-side filtering, so the rows written reflect exactly what InfluxDB returned server-side.
+        final Map<String, ValueSet> summary = new HashMap<>();
+        summary.put("host", SortedRangeSet.of(Range.equal(allocator, new ArrowType.Utf8(), "server1")));
+        final Constraints constraints = new Constraints(summary, Collections.emptyList(),
+                Collections.emptyList(), Constraints.DEFAULT_NO_LIMIT, null, null);
+
+        final List<String> hosts = readHostsFor(new TableName(database, "cpu"),
+                tableResponse.getSchema(), constraints);
+
+        // cpu was seeded with server1 and server2; the pushed-down predicate must exclude server2.
+        assertEquals(Collections.singletonList("server1"), hosts);
+    }
+
+    @Test
+    public void testSqlInjectionInConstraintIsEscaped() throws Exception
+    {
+        final GetTableResponse tableResponse = handler.doGetTable(
+                allocator,
+                new GetTableRequest(IDENTITY, "queryId", "catalog",
+                        new TableName(database, "cpu"), Collections.emptyMap()));
+        final Schema schema = tableResponse.getSchema();
+
+        // If the value were not escaped, this would close the string literal and inject a DROP.
+        final String payload = "server1'; DROP TABLE cpu; --";
+        final Map<String, ValueSet> summary = new HashMap<>();
+        summary.put("host", SortedRangeSet.of(Range.equal(allocator, new ArrowType.Utf8(), payload)));
+        final Constraints injection = new Constraints(summary, Collections.emptyList(),
+                Collections.emptyList(), Constraints.DEFAULT_NO_LIMIT, null, null);
+
+        // The payload is quoted/escaped as a single literal: the query runs safely and matches no host.
+        final List<String> injectionHosts = readHostsFor(new TableName(database, "cpu"), schema, injection);
+        assertTrue("injection payload must match no rows", injectionHosts.isEmpty());
+
+        // Crucially, the injected DROP must not have executed: cpu still exists...
+        final GetTableResponse afterResponse = handler.doGetTable(
+                allocator,
+                new GetTableRequest(IDENTITY, "queryId", "catalog",
+                        new TableName(database, "cpu"), Collections.emptyMap()));
+        assertTrue("cpu table must still exist after the injection attempt",
+                afterResponse.getSchema().getFields().size() > 0);
+
+        // ...and still returns its two seeded rows.
+        final List<String> afterHosts = readHostsFor(new TableName(database, "cpu"), schema, noConstraints());
+        assertEquals("cpu still has its two seeded rows", 2, afterHosts.size());
     }
 }
