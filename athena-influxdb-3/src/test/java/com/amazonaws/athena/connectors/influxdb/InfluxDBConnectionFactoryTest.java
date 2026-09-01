@@ -129,12 +129,17 @@ public class InfluxDBConnectionFactoryTest
         when(mockHandler.resolveSecrets("${my-secret}")).thenReturn("{\"other\": \"value\"}");
 
         final InfluxDBConnectionFactory factory = new InfluxDBConnectionFactory(config, mockHandler);
-        // No 'token' key: the raw JSON will be used as the token.
-        assertEquals("{\"other\": \"value\"}", factory.resolveToken());
+        try {
+            factory.resolveToken();
+            fail("expected missing key to throw an exception");
+        }
+        catch (final Exception e) {
+            assertTrue(e.getMessage().contains("Failed to parse secret as JSON: JSON secret does not contain key 'token'"));
+        }
     }
 
     @Test
-    public void testResolveTokenInvalidJsonFallsBackToRaw()
+    public void testResolveTokenInvalidJsonFallsBackToRaw() throws Exception
     {
         final Map<String, String> config = new HashMap<>();
         config.put("INFLUXDB3_HOST_URL", "https://localhost:8086");
@@ -142,7 +147,13 @@ public class InfluxDBConnectionFactoryTest
         when(mockHandler.resolveSecrets("${my-secret}")).thenReturn("{not-valid-json");
 
         final InfluxDBConnectionFactory factory = new InfluxDBConnectionFactory(config, mockHandler);
-        assertEquals("{not-valid-json", factory.resolveToken());
+        try {
+            factory.resolveToken();
+            fail("expected invalid JSON to throw an exception");
+        }
+        catch (final Exception e) {
+            assertTrue(e.getMessage().contains("Failed to parse secret as JSON: java.io.EOFException: End of input at line 1 column 16 path $.not-valid-json"));
+        }
     }
 
     @Test(expected = IllegalArgumentException.class)

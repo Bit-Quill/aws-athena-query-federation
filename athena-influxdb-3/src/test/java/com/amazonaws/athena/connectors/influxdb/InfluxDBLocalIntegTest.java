@@ -83,7 +83,7 @@ import static org.mockito.Mockito.when;
 /**
  * Integration test that runs against a local InfluxDB 3 Core container.
  */
-public class InfluxDBLocalIntegrationTest
+public class InfluxDBLocalIntegTest
 {
     private static final FederatedIdentity IDENTITY = new FederatedIdentity("arn", "account",
             Collections.<String, String>emptyMap(), Collections.<String>emptyList(),

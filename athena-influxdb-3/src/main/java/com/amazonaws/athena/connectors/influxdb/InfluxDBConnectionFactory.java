@@ -33,6 +33,8 @@ import org.apache.arrow.flight.FlightStatusCode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.naming.ConfigurationException;
+
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -317,36 +319,36 @@ public class InfluxDBConnectionFactory
      */
     String resolveToken()
     {
-        if (resolvedToken != null) {
-            return resolvedToken;
+        if (this.resolvedToken != null) {
+            return this.resolvedToken;
         }
         final String rawToken = configOptions.get(ENV_INFLUXDB_TOKEN);
         if (rawToken == null || rawToken.isEmpty()) {
             throw new IllegalArgumentException("Missing required env var: " + ENV_INFLUXDB_TOKEN);
         }
 
-        // Use the SDK's built-in secret resolution for ${secret_name} patterns
+        // Use the SDK's built-in secret resolution for ${secret_name} patterns.
         final String resolved = handler.resolveSecrets(rawToken);
 
-        // If the resolved value looks like JSON, extract the token key
-        final String trimmed = resolved.trim();
-        resolvedToken = trimmed;
-        if (resolvedToken.startsWith("{")) {
+        // If the resolved value looks like JSON, extract the token key.
+        String trimmed = resolved.trim();
+        if (trimmed.startsWith("{")) {
             try {
                 final JsonObject json = GSON.fromJson(trimmed, JsonObject.class);
                 final String tokenKey = configOptions.getOrDefault(ENV_INFLUXDB_TOKEN_KEY, DEFAULT_TOKEN_KEY);
                 if (json.has(tokenKey)) {
-                    resolvedToken = json.get(tokenKey).getAsString();
+                    trimmed = json.get(tokenKey).getAsString();
                 }
                 else {
-                    logger.warn("JSON secret does not contain key '{}', using raw value", tokenKey);
+                    throw new ConfigurationException("JSON secret does not contain key '" + tokenKey + "'");
                 }
             }
             catch (final Exception e) {
-                logger.warn("Failed to parse secret as JSON, using raw value");
+                throw new RuntimeException("Failed to parse secret as JSON: " + e.getMessage());
             }
         }
-        return resolvedToken;
+        this.resolvedToken = trimmed;
+        return this.resolvedToken;
     }
 
     public static final class DatabaseInfo
