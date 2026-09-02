@@ -50,6 +50,7 @@ import java.util.stream.Stream;
 
 import static com.amazonaws.athena.connectors.influxdb.InfluxDBConstants.DEFAULT_TOKEN_KEY;
 import static com.amazonaws.athena.connectors.influxdb.InfluxDBConstants.DEFAULT_TOKEN_REFRESH_MAX_RETRIES;
+import static com.amazonaws.athena.connectors.influxdb.InfluxDBConstants.ENV_ALLOW_INSECURE_TRANSPORT;
 import static com.amazonaws.athena.connectors.influxdb.InfluxDBConstants.ENV_INFLUXDB_HOST;
 import static com.amazonaws.athena.connectors.influxdb.InfluxDBConstants.ENV_INFLUXDB_TOKEN;
 import static com.amazonaws.athena.connectors.influxdb.InfluxDBConstants.ENV_INFLUXDB_TOKEN_KEY;
@@ -275,14 +276,18 @@ public class InfluxDBConnectionFactory
     List<DatabaseInfo> listDatabases() throws IOException, InterruptedException
     {
         final String host = configOptions.get(ENV_INFLUXDB_HOST);
+        final boolean allowInsecureTransport = Boolean.parseBoolean(configOptions.getOrDefault(ENV_ALLOW_INSECURE_TRANSPORT, "false"));
         if (host == null || host.isEmpty()) {
             throw new IllegalArgumentException("Missing required env var: " + ENV_INFLUXDB_HOST);
+        }
+        if (host.startsWith("http://") && !allowInsecureTransport) {
+            throw new IllegalArgumentException("Invalid host: '" + host + "'. Host must use HTTPS");
         }
         int refreshes = 0;
         while (true) {
             final String token = resolveToken();
             final HttpRequest httpRequest = HttpRequest.newBuilder()
-                    .uri(URI.create(host + "/api/v3/configure/database?format=json"))
+                    .uri(URI.create(host).resolve("/api/v3/configure/database?format=json"))
                     .timeout(Duration.ofMinutes(2))
                     .header("Authorization", "Bearer " + token)
                     .header("Accept", "application/json")
