@@ -29,6 +29,7 @@ import org.junit.Test;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
@@ -157,7 +158,7 @@ public class InfluxDBConnectionFactoryTest
     }
 
     @Test(expected = IllegalArgumentException.class)
-    public void testGetClientMissingHostThrows()
+    public void testGetClientMissingHostThrows() throws ExecutionException
     {
         final Map<String, String> config = new HashMap<>();
         config.put("INFLUXDB3_AUTH_TOKEN", "my-plain-token");
@@ -246,7 +247,7 @@ public class InfluxDBConnectionFactoryTest
     }
 
     @Test
-    public void testExecuteWithTokenRetrySurfacesThrottleAsFederationThrottleException()
+    public void testExecuteWithTokenRetrySurfacesThrottleAsFederationThrottleException() throws ExecutionException
     {
         final InfluxDBConnectionFactory factory = spyFactoryReturningClient(baseConfig());
         try {
@@ -268,7 +269,7 @@ public class InfluxDBConnectionFactoryTest
         return config;
     }
 
-    private InfluxDBConnectionFactory spyFactoryReturningClient(final Map<String, String> config)
+    private InfluxDBConnectionFactory spyFactoryReturningClient(final Map<String, String> config) throws ExecutionException
     {
         final InfluxDBClient mockClient = mock(InfluxDBClient.class);
         final InfluxDBConnectionFactory factory = spy(new InfluxDBConnectionFactory(config, mockHandler));
@@ -304,7 +305,7 @@ public class InfluxDBConnectionFactoryTest
     }
 
     @Test
-    public void testExecuteWithTokenRetryExhaustsCapThenThrows()
+    public void testExecuteWithTokenRetryExhaustsCapThenThrows() throws ExecutionException
     {
         final Map<String, String> config = baseConfig();
         config.put("token_refresh_max_retries", "2");
@@ -326,7 +327,7 @@ public class InfluxDBConnectionFactoryTest
     }
 
     @Test
-    public void testExecuteWithTokenRetryDoesNotRetryNonAuthError()
+    public void testExecuteWithTokenRetryDoesNotRetryNonAuthError() throws ExecutionException
     {
         final InfluxDBConnectionFactory factory = spyFactoryReturningClient(baseConfig());
         final AtomicInteger calls = new AtomicInteger();
