@@ -146,12 +146,15 @@ public class InfluxDBConnectionFactory
         }
 
         final String token = resolveToken();
-        String db;
-        if (database == null || database.isEmpty()) {
-            db = configOptions.getOrDefault("influxdb_database", "");
+
+        final String configuredDb = configOptions.getOrDefault("influxdb_database", "");
+        String db = (database == null || database.isEmpty()) ? configuredDb : database;
+        if (db.isEmpty()) {
+            throw new IllegalArgumentException("No database specified and no influxdb_database default is configured");
         }
-        else {
-            db = database;
+
+        if (!configuredDb.isEmpty() && !configuredDb.equalsIgnoreCase(db)) {
+            throw new IllegalArgumentException("Access to database '" + db + "' is denied; this connector is scoped to '" + configuredDb + "'");
         }
 
         final InfluxDBClient cachedInfluxDbClient = influxDbClients.getIfPresent(db);
