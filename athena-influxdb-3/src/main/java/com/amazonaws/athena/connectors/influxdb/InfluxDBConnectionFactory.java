@@ -28,6 +28,7 @@ import com.google.common.cache.RemovalNotification;
 import com.google.common.reflect.TypeToken;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonSyntaxException;
 import com.google.gson.annotations.SerializedName;
 import com.influxdb.v3.client.InfluxDBApiHttpException;
 import com.influxdb.v3.client.InfluxDBClient;
@@ -429,8 +430,11 @@ public class InfluxDBConnectionFactory
                     throw new ConfigurationException("JSON secret does not contain key '" + tokenKey + "'");
                 }
             }
+            catch (final JsonSyntaxException jse) {
+                logger.warn("Failed to parse secret as JSON. Treating secret as a raw token");
+            }
             catch (final Exception e) {
-                throw new RuntimeException("Failed to parse secret as JSON: " + e.getMessage());
+                throw new RuntimeException("Unexpected error occurred while parsing secret JSON: " + e.getMessage());
             }
         }
         this.resolvedToken = trimmed;

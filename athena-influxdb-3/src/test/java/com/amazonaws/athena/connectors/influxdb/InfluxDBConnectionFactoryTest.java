@@ -135,7 +135,7 @@ public class InfluxDBConnectionFactoryTest
             fail("expected missing key to throw an exception");
         }
         catch (final Exception e) {
-            assertTrue(e.getMessage().contains("Failed to parse secret as JSON: JSON secret does not contain key 'token'"));
+            assertTrue(e.getMessage().contains("Unexpected error occurred while parsing secret JSON: JSON secret does not contain key 'token'"));
         }
     }
 
@@ -148,13 +148,8 @@ public class InfluxDBConnectionFactoryTest
         when(mockHandler.resolveSecrets("${my-secret}")).thenReturn("{not-valid-json");
 
         final InfluxDBConnectionFactory factory = new InfluxDBConnectionFactory(config, mockHandler);
-        try {
-            factory.resolveToken();
-            fail("expected invalid JSON to throw an exception");
-        }
-        catch (final Exception e) {
-            assertTrue(e.getMessage().contains("Failed to parse secret as JSON: java.io.EOFException: End of input at line 1 column 16 path $.not-valid-json"));
-        }
+        // Invalid JSON will should be treated as a token, since a token may start with '{'..
+        factory.resolveToken();
     }
 
     @Test(expected = IllegalArgumentException.class)
